@@ -5879,6 +5879,166 @@ const docTemplate = `{
                 }
             }
         },
+        "/production-analytics/downtime": {
+            "get": {
+                "description": "Get downtime rows for visualization.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "production-analytics"
+                ],
+                "summary": "Downtime analytics",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/dto.Response"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/dto.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/dto.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/production-analytics/job-completion": {
+            "get": {
+                "description": "Get job completion rows for visualization.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "production-analytics"
+                ],
+                "summary": "Job completion analytics",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/dto.Response"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/dto.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/dto.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/production-analytics/machine-utilization": {
+            "get": {
+                "description": "Get machine utilization rows for visualization.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "production-analytics"
+                ],
+                "summary": "Machine utilization analytics",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/dto.Response"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/dto.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/dto.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/production-analytics/output": {
+            "get": {
+                "description": "Get production output rows for visualization.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "production-analytics"
+                ],
+                "summary": "Production output analytics",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/dto.Response"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/dto.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/dto.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/production-analytics/summary": {
+            "get": {
+                "description": "Get production analytics summary metrics for visualization.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "production-analytics"
+                ],
+                "summary": "Production analytics summary",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/dto.Response"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/dto.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/dto.Response"
+                        }
+                    }
+                }
+            }
+        },
         "/production-logs": {
             "post": {
                 "description": "Log production",
@@ -7481,22 +7641,57 @@ const docTemplate = `{
         },
         "/reports/bottlenecks": {
             "get": {
-                "description": "Bottleneck forecast",
+                "description": "Generate a PDF report for bottlenecks.",
                 "consumes": [
                     "application/json"
                 ],
                 "produces": [
-                    "application/json"
+                    "application/pdf"
                 ],
                 "tags": [
                     "reports"
                 ],
-                "summary": "Bottleneck forecast",
+                "summary": "Bottleneck PDF",
                 "responses": {
                     "200": {
                         "description": "OK",
                         "schema": {
+                            "type": "file"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
                             "$ref": "#/definitions/dto.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/dto.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/reports/downtime": {
+            "get": {
+                "description": "Generate a PDF report for downtime.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/pdf"
+                ],
+                "tags": [
+                    "reports"
+                ],
+                "summary": "Downtime PDF",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "file"
                         }
                     },
                     "400": {
@@ -7516,22 +7711,22 @@ const docTemplate = `{
         },
         "/reports/inventory-trends": {
             "get": {
-                "description": "Inventory trends",
+                "description": "Generate a PDF report for inventory trends.",
                 "consumes": [
                     "application/json"
                 ],
                 "produces": [
-                    "application/json"
+                    "application/pdf"
                 ],
                 "tags": [
                     "reports"
                 ],
-                "summary": "Inventory trends",
+                "summary": "Inventory trends PDF",
                 "responses": {
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/dto.Response"
+                            "type": "file"
                         }
                     },
                     "400": {
@@ -7551,22 +7746,22 @@ const docTemplate = `{
         },
         "/reports/job-completion": {
             "get": {
-                "description": "Job completion",
+                "description": "Generate a PDF report for job completion.",
                 "consumes": [
                     "application/json"
                 ],
                 "produces": [
-                    "application/json"
+                    "application/pdf"
                 ],
                 "tags": [
                     "reports"
                 ],
-                "summary": "Job completion",
+                "summary": "Job completion PDF",
                 "responses": {
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/dto.Response"
+                            "type": "file"
                         }
                     },
                     "400": {
@@ -7586,22 +7781,22 @@ const docTemplate = `{
         },
         "/reports/machine-utilization": {
             "get": {
-                "description": "Machine utilization",
+                "description": "Generate a PDF report for machine utilization.",
                 "consumes": [
                     "application/json"
                 ],
                 "produces": [
-                    "application/json"
+                    "application/pdf"
                 ],
                 "tags": [
                     "reports"
                 ],
-                "summary": "Machine utilization",
+                "summary": "Machine utilization PDF",
                 "responses": {
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/dto.Response"
+                            "type": "file"
                         }
                     },
                     "400": {
@@ -7621,22 +7816,22 @@ const docTemplate = `{
         },
         "/reports/maintenance-efficiency": {
             "get": {
-                "description": "Maintenance efficiency",
+                "description": "Generate a PDF report for maintenance efficiency.",
                 "consumes": [
                     "application/json"
                 ],
                 "produces": [
-                    "application/json"
+                    "application/pdf"
                 ],
                 "tags": [
                     "reports"
                 ],
-                "summary": "Maintenance efficiency",
+                "summary": "Maintenance efficiency PDF",
                 "responses": {
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/dto.Response"
+                            "type": "file"
                         }
                     },
                     "400": {
@@ -7656,22 +7851,22 @@ const docTemplate = `{
         },
         "/reports/oee": {
             "get": {
-                "description": "OEE trends",
+                "description": "Generate a PDF report for OEE trends.",
                 "consumes": [
                     "application/json"
                 ],
                 "produces": [
-                    "application/json"
+                    "application/pdf"
                 ],
                 "tags": [
                     "reports"
                 ],
-                "summary": "OEE trends",
+                "summary": "OEE trends PDF",
                 "responses": {
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/dto.Response"
+                            "type": "file"
                         }
                     },
                     "400": {
@@ -7691,22 +7886,22 @@ const docTemplate = `{
         },
         "/reports/production-output": {
             "get": {
-                "description": "Production output per slot",
+                "description": "Generate a PDF report for production output.",
                 "consumes": [
                     "application/json"
                 ],
                 "produces": [
-                    "application/json"
+                    "application/pdf"
                 ],
                 "tags": [
                     "reports"
                 ],
-                "summary": "Production output per slot",
+                "summary": "Production output PDF",
                 "responses": {
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/dto.Response"
+                            "type": "file"
                         }
                     },
                     "400": {
@@ -7726,22 +7921,22 @@ const docTemplate = `{
         },
         "/reports/quality-trends": {
             "get": {
-                "description": "Quality trends",
+                "description": "Generate a PDF report for quality trends.",
                 "consumes": [
                     "application/json"
                 ],
                 "produces": [
-                    "application/json"
+                    "application/pdf"
                 ],
                 "tags": [
                     "reports"
                 ],
-                "summary": "Quality trends",
+                "summary": "Quality trends PDF",
                 "responses": {
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/dto.Response"
+                            "type": "file"
                         }
                     },
                     "400": {

@@ -765,6 +765,57 @@ test('FactoryAgentChatPanel renders typed mutation rows when final wording chang
   await view.unmount()
 })
 
+test('FactoryAgentChatPanel renders PDF file download response document card', async () => {
+  const document = baseResponseDocument({
+    blocks: [
+      {
+        id: 'activity:rd-session-1-turn-1',
+        type: 'run_activity',
+        step_ids: ['analysis-1', 'completed-1'],
+      },
+      {
+        id: 'message:file-download:completed',
+        type: 'short_message',
+        message: 'production-output-2026-07-03.pdf is ready to view or download.',
+        status: 'completed',
+      },
+      {
+        id: 'file:production-output',
+        type: 'file_download',
+        title: 'PDF report ready',
+        filename: 'production-output-2026-07-03.pdf',
+        content_type: 'application/pdf',
+        download_url: 'http://testserver/api/v1/reports/production-output',
+        view_url: 'http://testserver/api/v1/reports/production-output',
+        summary: 'The production output report is ready.',
+      },
+    ],
+  })
+  const chatState = createChatState({
+    session: { session_id: 'session-pdf-report', name: 'PDF report', status: 'COMPLETED' },
+    sessionList: [{ session_id: 'session-pdf-report', name: 'PDF report', status: 'COMPLETED' }],
+    activeSessionName: 'PDF report',
+    turns: [responseDocumentTurn(document)],
+  })
+
+  const view = await renderPanelWithState(chatState)
+
+  await waitFor(() => assert.match(view.text(), /production-output-2026-07-03\.pdf/))
+  assert.equal(view.container.querySelectorAll('[data-response-block-type="file_download"]').length, 1)
+  assert.match(view.text(), /View PDF/)
+  assert.match(view.text(), /Download PDF/)
+  const viewLink = view.container.querySelector('[data-response-block-type="file_download"] a[target="_blank"]')
+  assert.equal(viewLink?.getAttribute('href'), 'http://testserver/api/v1/reports/production-output')
+  const downloadLink = view.container.querySelector('[data-response-block-type="file_download"] [data-response-file-download]')
+  assert.equal(
+    downloadLink?.getAttribute('href'),
+    'http://testserver/api/v1/reports/production-output?download=1',
+  )
+  assert.equal(downloadLink?.getAttribute('download'), 'production-output-2026-07-03.pdf')
+
+  await view.unmount()
+})
+
 test('FactoryAgentChatPanel renders typed knowledge sources without exact answer wording', async () => {
   const { default: FactoryAgentChatPanel } = await server.ssrLoadModule('/src/components/features/chat/factory-agent/FactoryAgentChatPanel.jsx')
   const chatState = createChatState({

@@ -48,6 +48,65 @@ _DOC_HINT_RE = re.compile(
     r"safety|ppe|osha|manual|standard|guidance|instructions?|hazard(?:ous)?)\b",
     re.IGNORECASE,
 )
+_PDF_REPORT_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
+    (
+        "production output",
+        re.compile(
+            r"\b(?:production\s+output\s+reports?|reports?\s+(?:for\s+)?production\s+output)\b",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "machine utilization",
+        re.compile(
+            r"\b(?:(?:machine\s+)?utili[sz]ation\s+reports?|reports?\s+(?:for\s+)?(?:machine\s+)?utili[sz]ation)\b",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "job completion",
+        re.compile(
+            r"\b(?:job\s+completion\s+reports?|reports?\s+(?:for\s+)?job\s+completion)\b",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "inventory trends",
+        re.compile(
+            r"\b(?:inventory\s+trends?\s+reports?|reports?\s+(?:for\s+)?inventory\s+trends?)\b",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "quality trends",
+        re.compile(
+            r"\b(?:quality\s+trends?\s+reports?|reports?\s+(?:for\s+)?quality\s+trends?)\b",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "oee",
+        re.compile(r"\b(?:oee\s+reports?|reports?\s+(?:for\s+)?oee)\b", re.IGNORECASE),
+    ),
+    (
+        "bottlenecks",
+        re.compile(
+            r"\b(?:bottlenecks?\s+reports?|reports?\s+(?:for\s+)?bottlenecks?)\b",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "maintenance efficiency",
+        re.compile(
+            r"\b(?:maintenance\s+efficiency\s+reports?|reports?\s+(?:for\s+)?maintenance\s+efficiency)\b",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "downtime",
+        re.compile(r"\b(?:downtime\s+reports?|reports?\s+(?:for\s+)?downtime)\b", re.IGNORECASE),
+    ),
+)
 _LIMIT_RE = re.compile(r"\b(?:limit|top|first|next)\s+(\d{1,3})\b", re.IGNORECASE)
 _SORT_HINT_RE = re.compile(r"\b(?:sort(?:ed)?|order(?:ed)?|rank(?:ed)?)\s+by\b", re.IGNORECASE)
 _DESC_RE = re.compile(r"\b(?:desc(?:ending)?|latest|last|furthest|highest)\b", re.IGNORECASE)
@@ -708,6 +767,7 @@ def build_requirement_sketch_for_text(
         )
         if (
             intake_item.role != "mutation_or_approval_request"
+            and not _pdf_report_type_for_clause(clause)
             and _dependent_singular_read_entity(clause)
             and not _has_bounded_identity_constraints(
                 constraints,
@@ -1493,6 +1553,8 @@ def _output_contract_for_tool(tool: ToolInfo, *, actions: list[CapabilityAction]
             return contracts
 
     tags = {normalize_token(tag) for tag in tool.capability_tags or []}
+    if _tool_returns_pdf(tool):
+        return "file_download_v1"
     if "status" in tags and "read_one" in actions:
         return "entity_status_v1"
     if "list" in actions or "read_many" in actions:
@@ -1596,6 +1658,8 @@ def _enum_values(field_schema: dict[str, Any]) -> list[str]:
 def _source_for_frame(frame: SemanticFrame, clause: str) -> SourceOfTruth:
     if frame.route.startswith("rag.") or frame.domain_intent in {"loto_procedure", "document_procedure", "safety_policy"}:
         return "document_knowledge"
+    if _pdf_report_type_for_clause(clause):
+        return "operational_state"
     if frame.route.startswith("tool.") or frame.route in {"approval_action", "cancel_run"}:
         return "operational_state"
     if match_runtime_corpus_document_route(clause).is_match:
@@ -1625,6 +1689,8 @@ def _entity_for_hint(frame: SemanticFrame, clause: str, source: SourceOfTruth) -
         if "policy" in lowered or "osha" in lowered or "ppe" in lowered or "safety" in lowered:
             return "policy"
         return "procedure"
+    if _pdf_report_type_for_clause(clause):
+        return "report"
     if frame.entity:
         return frame.entity
     if "job" in clause.lower() or "work order" in clause.lower():
@@ -1665,6 +1731,11 @@ def _constraints_for_clause(
         if target_field not in constraints:
             constraints[target_field] = values[0] if len(values) == 1 else list(values)
 
+    report_type = _pdf_report_type_for_clause(clause)
+    if entity == "report" and report_type:
+        constraints.setdefault("report_type", report_type)
+        constraints.setdefault("report_format", "pdf")
+
     metadata = _metadata_for_entity(capability_map, entity=entity, source=source_of_truth)
     filter_enums = _filter_enums(metadata)
     for field, enum_values in filter_enums.items():
@@ -1703,6 +1774,23 @@ def _requires_evidence_driven_followup(clause: str, *, frame: SemanticFrame) -> 
     if frame.action not in {"read", "unknown"}:
         return False
     return bool(_EVIDENCE_DRIVEN_FOLLOWUP_RE.search(clause))
+
+
+def _pdf_report_type_for_clause(clause: str) -> str | None:
+    for report_type, pattern in _PDF_REPORT_PATTERNS:
+        if pattern.search(clause or ""):
+            return report_type
+    return None
+
+
+def _tool_returns_pdf(tool: ToolInfo) -> bool:
+    content_types = []
+    if isinstance(tool.output_schema, dict):
+        content_types = list(tool.output_schema.get("x-response-content-types") or [])
+    if any(str(item).split(";")[0].strip().lower() == "application/pdf" for item in content_types):
+        return True
+    tags = {normalize_token(tag) for tag in tool.capability_tags or []}
+    return "pdf" in tags
 
 
 def _bind_dependent_mutation_to_previous_result_set(
@@ -2111,6 +2199,8 @@ def _dependent_clause_requires_evidence_branch(clause: str) -> bool:
 
 
 def _clarification_need_for_clause(clause: str, *, frame: SemanticFrame) -> dict[str, str] | None:
+    if _pdf_report_type_for_clause(clause):
+        return None
     if frame.normalized_entities:
         return None
     match = re.search(
@@ -2431,6 +2521,8 @@ def _requirement_shape_for(
         return "safety_refusal", "refuse_for_safety"
     if frame.requires_approval or constraints.get("requires_approval") or frame.action in {"create", "update", "delete"}:
         return "mutation_request", "stage_mutation"
+    if entity == "report" and constraints.get("report_format") == "pdf":
+        return "filtered_collection", "report_filtered_collection"
     if entity and _has_multiple_entity_ids(constraints):
         return "multi_entity_status", "report_multi_status"
     if entity and any(key.endswith("_id") or key in {"id", "machine_ref"} for key in constraints):

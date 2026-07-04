@@ -1,0 +1,2247 @@
+{
+  "node": "semantic_intake_node",
+  "results": [
+    {
+      "behavior": "single read",
+      "duration_ms": 40,
+      "error": null,
+      "evidence": {
+        "candidate_tool_windows": [],
+        "case_id": "semantic-intake-001-single-read",
+        "evidence_ledger": {
+          "evidence": []
+        },
+        "final_validation_result": null,
+        "graph_diagnostics": {
+          "capability_needs": [
+            {
+              "action": "read_one",
+              "constraints": {
+                "machine_id": "M-CNC-01"
+              },
+              "entity": "machine",
+              "known_args": {
+                "machine_id": "M-CNC-01"
+              },
+              "reason": "deterministic_source_hint:operational_state",
+              "requested_fields": [
+                "status"
+              ],
+              "requirement_id": "req-001",
+              "source_of_truth": "operational_state"
+            }
+          ],
+          "graph_state_phase": "phase1_contracts_only",
+          "phase3_last_node": "semantic_intake_node",
+          "phase3_node_order": [
+            "semantic_intake_node"
+          ],
+          "semantic_intake": {
+            "active_executable_roles": [
+              "required_requirement"
+            ],
+            "compiled_requirement_count": 1,
+            "compiler_authority": "deterministic",
+            "item_count": 1,
+            "prepared_clause_count": 1,
+            "proposer": "deterministic_fallback_semantic_intake_proposer",
+            "raw_llm_output_executes_tools": false,
+            "role_counts": {
+              "required_requirement": 1
+            },
+            "runs_inside_langgraph_node": true,
+            "source": "deterministic_fallback",
+            "status": "compiled_in_langgraph_node"
+          }
+        },
+        "hydrated_tool_cards": [],
+        "node": "semantic_intake_node",
+        "node_order": [
+          "semantic_intake_node"
+        ],
+        "pending_approval": {
+          "approval_id": null,
+          "checkpoint_id": null,
+          "decision_id": null,
+          "ledger_revision": null,
+          "payload": {},
+          "requirement_id": null,
+          "status": "none",
+          "tool_call": null
+        },
+        "planner_decisions": [],
+        "planner_diagnostics": {
+          "capability_need_count": 1,
+          "execution_started": false,
+          "planner_kind": "planner_owned_agent_graph_phase1_state_contract",
+          "received_full_tool_catalog_before_need": false,
+          "saw_high_level_capability_map": true,
+          "saw_original_query": true,
+          "saw_requirement_ledger": true,
+          "semantic_intake": {
+            "compiled_in_langgraph_node": true,
+            "original_query_present": true,
+            "phase": "phase5_execution_observation"
+          }
+        },
+        "planner_proposer_diagnostics": null,
+        "provider": {
+          "llm_base_url_present": false,
+          "openai_api_key_present": true,
+          "openai_base_url_present": true,
+          "planner_model": "Qwen2.5-7B-Instruct-Q4_K_M.gguf",
+          "planner_openai_api_key_present": false,
+          "planner_openai_base_url_present": true
+        },
+        "rag_calls": [],
+        "requirement_ledger": {
+          "answer_instructions": [],
+          "clarification_needs": [],
+          "conditional_branches": [],
+          "formatting_instructions": [],
+          "intake_clauses": [
+            {
+              "branch_id": null,
+              "id": "clause-001",
+              "parent_requirement_id": null,
+              "reason": "executable_required_requirement",
+              "requirement_id": "req-001",
+              "role": "required_requirement",
+              "text": "Show machine M-CNC-01 status."
+            }
+          ],
+          "intake_diagnostics": {
+            "active_executable_roles": [
+              "required_requirement"
+            ],
+            "compiled_requirement_count": 1,
+            "compiler_authority": "deterministic",
+            "item_count": 1,
+            "prepared_clause_count": 1,
+            "proposer": "deterministic_fallback_semantic_intake_proposer",
+            "raw_llm_output_executes_tools": false,
+            "role_counts": {
+              "required_requirement": 1
+            },
+            "source": "deterministic_fallback"
+          },
+          "requirements": [
+            {
+              "blockers": [],
+              "constraints": {
+                "machine_id": "M-CNC-01"
+              },
+              "depends_on": [],
+              "derived_from_evidence_refs": [],
+              "derived_from_missing_reasons": [],
+              "entity": "machine",
+              "evidence_refs": [],
+              "expansion_reason": null,
+              "goal": "Show machine M-CNC-01 status.",
+              "id": "req-001",
+              "intent_operation": "report_status",
+              "locked_constraints": [
+                "machine_id",
+                "requested_fields"
+              ],
+              "origin": {
+                "constraints": "deterministic_extraction",
+                "fields": "metadata_field_aliases",
+                "goal": "deterministic_requirement_sketch",
+                "source_of_truth": "capability_map_hint"
+              },
+              "parent_requirement_id": null,
+              "requested_fields": [
+                "status"
+              ],
+              "required": true,
+              "requirement_type": "single_entity_status",
+              "satisfaction_checks": [],
+              "source_of_truth": "operational_state",
+              "status": "open",
+              "superseded_by": null
+            }
+          ],
+          "revision": 1,
+          "revision_history": [
+            {
+              "actor": "deterministic_guard",
+              "change_type": "initial_requirement_sketch",
+              "details": {},
+              "locked_constraints_preserved": true,
+              "patch_id": null,
+              "reason": "Phase 3 locked hard constraints before planner execution.",
+              "requirement_id": null,
+              "revision": 1
+            }
+          ],
+          "user_goal": "Show machine M-CNC-01 status."
+        },
+        "response_document_context": {
+          "diagnostics": {},
+          "document_id": null,
+          "evidence_refs": [],
+          "pending_approval_id": null,
+          "render_contract": null,
+          "requirement_ids": [
+            "req-001"
+          ],
+          "revision": 1,
+          "state": "not_started"
+        },
+        "satisfaction_state": {
+          "requirements": []
+        },
+        "selected_tool_names": [],
+        "selector_calls": [],
+        "tool_retrieval_diagnostics": {},
+        "trace_events": [
+          {
+            "event": "planner_owned_agent_graph_node",
+            "evidence_count": 0,
+            "ledger_revision": 1,
+            "node": "semantic_intake_node",
+            "planner_decision_count": 0,
+            "source_types": [],
+            "tool_names": []
+          }
+        ]
+      },
+      "failures": [],
+      "id": "semantic-intake-001-single-read",
+      "node": "semantic_intake_node",
+      "prompt": "Show machine M-CNC-01 status.",
+      "started_at": "2026-06-20T07:37:21.899507+00:00",
+      "status": "passed"
+    },
+    {
+      "behavior": "filtered list",
+      "duration_ms": 39,
+      "error": null,
+      "evidence": {
+        "candidate_tool_windows": [],
+        "case_id": "semantic-intake-002-filtered-list",
+        "evidence_ledger": {
+          "evidence": []
+        },
+        "final_validation_result": null,
+        "graph_diagnostics": {
+          "capability_needs": [
+            {
+              "action": "list",
+              "constraints": {
+                "limit": 3,
+                "priority": "low",
+                "sort_by": "deadline",
+                "sort_dir": "asc"
+              },
+              "entity": "job",
+              "known_args": {},
+              "reason": "deterministic_source_hint:operational_state",
+              "requested_fields": [
+                "job_id",
+                "deadline"
+              ],
+              "requirement_id": "req-001",
+              "source_of_truth": "operational_state"
+            }
+          ],
+          "graph_state_phase": "phase1_contracts_only",
+          "phase3_last_node": "semantic_intake_node",
+          "phase3_node_order": [
+            "semantic_intake_node"
+          ],
+          "semantic_intake": {
+            "active_executable_roles": [
+              "required_requirement"
+            ],
+            "compiled_requirement_count": 1,
+            "compiler_authority": "deterministic",
+            "item_count": 1,
+            "prepared_clause_count": 1,
+            "proposer": "deterministic_fallback_semantic_intake_proposer",
+            "raw_llm_output_executes_tools": false,
+            "role_counts": {
+              "required_requirement": 1
+            },
+            "runs_inside_langgraph_node": true,
+            "source": "deterministic_fallback",
+            "status": "compiled_in_langgraph_node"
+          }
+        },
+        "hydrated_tool_cards": [],
+        "node": "semantic_intake_node",
+        "node_order": [
+          "semantic_intake_node"
+        ],
+        "pending_approval": {
+          "approval_id": null,
+          "checkpoint_id": null,
+          "decision_id": null,
+          "ledger_revision": null,
+          "payload": {},
+          "requirement_id": null,
+          "status": "none",
+          "tool_call": null
+        },
+        "planner_decisions": [],
+        "planner_diagnostics": {
+          "capability_need_count": 1,
+          "execution_started": false,
+          "planner_kind": "planner_owned_agent_graph_phase1_state_contract",
+          "received_full_tool_catalog_before_need": false,
+          "saw_high_level_capability_map": true,
+          "saw_original_query": true,
+          "saw_requirement_ledger": true,
+          "semantic_intake": {
+            "compiled_in_langgraph_node": true,
+            "original_query_present": true,
+            "phase": "phase5_execution_observation"
+          }
+        },
+        "planner_proposer_diagnostics": null,
+        "provider": {
+          "llm_base_url_present": false,
+          "openai_api_key_present": true,
+          "openai_base_url_present": true,
+          "planner_model": "Qwen2.5-7B-Instruct-Q4_K_M.gguf",
+          "planner_openai_api_key_present": false,
+          "planner_openai_base_url_present": true
+        },
+        "rag_calls": [],
+        "requirement_ledger": {
+          "answer_instructions": [],
+          "clarification_needs": [],
+          "conditional_branches": [],
+          "formatting_instructions": [],
+          "intake_clauses": [
+            {
+              "branch_id": null,
+              "id": "clause-001",
+              "parent_requirement_id": null,
+              "reason": "executable_required_requirement",
+              "requirement_id": "req-001",
+              "role": "required_requirement",
+              "text": "List low priority jobs sorted by deadline ascending, limit 3."
+            }
+          ],
+          "intake_diagnostics": {
+            "active_executable_roles": [
+              "required_requirement"
+            ],
+            "compiled_requirement_count": 1,
+            "compiler_authority": "deterministic",
+            "item_count": 1,
+            "prepared_clause_count": 1,
+            "proposer": "deterministic_fallback_semantic_intake_proposer",
+            "raw_llm_output_executes_tools": false,
+            "role_counts": {
+              "required_requirement": 1
+            },
+            "source": "deterministic_fallback"
+          },
+          "requirements": [
+            {
+              "blockers": [],
+              "constraints": {
+                "limit": 3,
+                "priority": "low",
+                "sort_by": "deadline",
+                "sort_dir": "asc"
+              },
+              "depends_on": [],
+              "derived_from_evidence_refs": [],
+              "derived_from_missing_reasons": [],
+              "entity": "job",
+              "evidence_refs": [],
+              "expansion_reason": null,
+              "goal": "List low priority jobs sorted by deadline ascending, limit 3.",
+              "id": "req-001",
+              "intent_operation": "report_filtered_collection",
+              "locked_constraints": [
+                "priority",
+                "sort_by",
+                "sort_dir",
+                "limit",
+                "requested_fields"
+              ],
+              "origin": {
+                "constraints": "deterministic_extraction",
+                "fields": "metadata_field_aliases",
+                "goal": "deterministic_requirement_sketch",
+                "source_of_truth": "capability_map_hint"
+              },
+              "parent_requirement_id": null,
+              "requested_fields": [
+                "job_id",
+                "deadline"
+              ],
+              "required": true,
+              "requirement_type": "filtered_collection",
+              "satisfaction_checks": [],
+              "source_of_truth": "operational_state",
+              "status": "open",
+              "superseded_by": null
+            }
+          ],
+          "revision": 1,
+          "revision_history": [
+            {
+              "actor": "deterministic_guard",
+              "change_type": "initial_requirement_sketch",
+              "details": {},
+              "locked_constraints_preserved": true,
+              "patch_id": null,
+              "reason": "Phase 3 locked hard constraints before planner execution.",
+              "requirement_id": null,
+              "revision": 1
+            }
+          ],
+          "user_goal": "List low priority jobs sorted by deadline ascending, limit 3."
+        },
+        "response_document_context": {
+          "diagnostics": {},
+          "document_id": null,
+          "evidence_refs": [],
+          "pending_approval_id": null,
+          "render_contract": null,
+          "requirement_ids": [
+            "req-001"
+          ],
+          "revision": 1,
+          "state": "not_started"
+        },
+        "satisfaction_state": {
+          "requirements": []
+        },
+        "selected_tool_names": [],
+        "selector_calls": [],
+        "tool_retrieval_diagnostics": {},
+        "trace_events": [
+          {
+            "event": "planner_owned_agent_graph_node",
+            "evidence_count": 0,
+            "ledger_revision": 1,
+            "node": "semantic_intake_node",
+            "planner_decision_count": 0,
+            "source_types": [],
+            "tool_names": []
+          }
+        ]
+      },
+      "failures": [],
+      "id": "semantic-intake-002-filtered-list",
+      "node": "semantic_intake_node",
+      "prompt": "List low priority jobs sorted by deadline ascending, limit 3.",
+      "started_at": "2026-06-20T07:37:22.001416+00:00",
+      "status": "passed"
+    },
+    {
+      "behavior": "document/RAG",
+      "duration_ms": 1272,
+      "error": null,
+      "evidence": {
+        "candidate_tool_windows": [],
+        "case_id": "semantic-intake-003-document-rag",
+        "evidence_ledger": {
+          "evidence": []
+        },
+        "final_validation_result": null,
+        "graph_diagnostics": {
+          "capability_needs": [
+            {
+              "action": "search_documents",
+              "constraints": {
+                "machine_id": "M-CNC-01",
+                "requires_followup_evidence": true,
+                "safety_constraints": [
+                  "preserve safety requirements"
+                ]
+              },
+              "entity": "procedure",
+              "known_args": {
+                "machine_id": "M-CNC-01"
+              },
+              "reason": "deterministic_source_hint:document_knowledge",
+              "requested_fields": [],
+              "requirement_id": "req-001",
+              "source_of_truth": "document_knowledge"
+            }
+          ],
+          "graph_state_phase": "phase1_contracts_only",
+          "phase3_last_node": "semantic_intake_node",
+          "phase3_node_order": [
+            "semantic_intake_node"
+          ],
+          "semantic_intake": {
+            "active_executable_roles": [
+              "required_requirement"
+            ],
+            "compiled_requirement_count": 1,
+            "compiler_authority": "deterministic",
+            "item_count": 1,
+            "prepared_clause_count": 1,
+            "proposer": "deterministic_fallback_semantic_intake_proposer",
+            "raw_llm_output_executes_tools": false,
+            "role_counts": {
+              "required_requirement": 1
+            },
+            "runs_inside_langgraph_node": true,
+            "source": "deterministic_fallback",
+            "status": "compiled_in_langgraph_node"
+          }
+        },
+        "hydrated_tool_cards": [],
+        "node": "semantic_intake_node",
+        "node_order": [
+          "semantic_intake_node"
+        ],
+        "pending_approval": {
+          "approval_id": null,
+          "checkpoint_id": null,
+          "decision_id": null,
+          "ledger_revision": null,
+          "payload": {},
+          "requirement_id": null,
+          "status": "none",
+          "tool_call": null
+        },
+        "planner_decisions": [],
+        "planner_diagnostics": {
+          "capability_need_count": 1,
+          "execution_started": false,
+          "planner_kind": "planner_owned_agent_graph_phase1_state_contract",
+          "received_full_tool_catalog_before_need": false,
+          "saw_high_level_capability_map": true,
+          "saw_original_query": true,
+          "saw_requirement_ledger": true,
+          "semantic_intake": {
+            "compiled_in_langgraph_node": true,
+            "original_query_present": true,
+            "phase": "phase5_execution_observation"
+          }
+        },
+        "planner_proposer_diagnostics": null,
+        "provider": {
+          "llm_base_url_present": false,
+          "openai_api_key_present": true,
+          "openai_base_url_present": true,
+          "planner_model": "Qwen2.5-7B-Instruct-Q4_K_M.gguf",
+          "planner_openai_api_key_present": false,
+          "planner_openai_base_url_present": true
+        },
+        "rag_calls": [],
+        "requirement_ledger": {
+          "answer_instructions": [],
+          "clarification_needs": [],
+          "conditional_branches": [],
+          "formatting_instructions": [],
+          "intake_clauses": [
+            {
+              "branch_id": null,
+              "id": "clause-001",
+              "parent_requirement_id": null,
+              "reason": "executable_required_requirement",
+              "requirement_id": "req-001",
+              "role": "required_requirement",
+              "text": "Use LOTO procedure documents to explain lockout steps for machine M-CNC-01."
+            }
+          ],
+          "intake_diagnostics": {
+            "active_executable_roles": [
+              "required_requirement"
+            ],
+            "compiled_requirement_count": 1,
+            "compiler_authority": "deterministic",
+            "item_count": 1,
+            "prepared_clause_count": 1,
+            "proposer": "deterministic_fallback_semantic_intake_proposer",
+            "raw_llm_output_executes_tools": false,
+            "role_counts": {
+              "required_requirement": 1
+            },
+            "source": "deterministic_fallback"
+          },
+          "requirements": [
+            {
+              "blockers": [],
+              "constraints": {
+                "machine_id": "M-CNC-01",
+                "requires_followup_evidence": true,
+                "safety_constraints": [
+                  "preserve safety requirements"
+                ]
+              },
+              "depends_on": [],
+              "derived_from_evidence_refs": [],
+              "derived_from_missing_reasons": [],
+              "entity": "procedure",
+              "evidence_refs": [],
+              "expansion_reason": null,
+              "goal": "Use LOTO procedure documents to explain lockout steps for machine M-CNC-01.",
+              "id": "req-001",
+              "intent_operation": "answer_document_question",
+              "locked_constraints": [
+                "machine_id",
+                "safety_constraints"
+              ],
+              "origin": {
+                "constraints": "deterministic_extraction",
+                "fields": "metadata_field_aliases",
+                "goal": "deterministic_requirement_sketch",
+                "source_of_truth": "capability_map_hint"
+              },
+              "parent_requirement_id": null,
+              "requested_fields": [],
+              "required": true,
+              "requirement_type": "document_answer",
+              "satisfaction_checks": [],
+              "source_of_truth": "document_knowledge",
+              "status": "open",
+              "superseded_by": null
+            }
+          ],
+          "revision": 1,
+          "revision_history": [
+            {
+              "actor": "deterministic_guard",
+              "change_type": "initial_requirement_sketch",
+              "details": {},
+              "locked_constraints_preserved": true,
+              "patch_id": null,
+              "reason": "Phase 3 locked hard constraints before planner execution.",
+              "requirement_id": null,
+              "revision": 1
+            }
+          ],
+          "user_goal": "Use LOTO procedure documents to explain lockout steps for machine M-CNC-01."
+        },
+        "response_document_context": {
+          "diagnostics": {},
+          "document_id": null,
+          "evidence_refs": [],
+          "pending_approval_id": null,
+          "render_contract": null,
+          "requirement_ids": [
+            "req-001"
+          ],
+          "revision": 1,
+          "state": "not_started"
+        },
+        "satisfaction_state": {
+          "requirements": []
+        },
+        "selected_tool_names": [],
+        "selector_calls": [],
+        "tool_retrieval_diagnostics": {},
+        "trace_events": [
+          {
+            "event": "planner_owned_agent_graph_node",
+            "evidence_count": 0,
+            "ledger_revision": 1,
+            "node": "semantic_intake_node",
+            "planner_decision_count": 0,
+            "source_types": [],
+            "tool_names": []
+          }
+        ]
+      },
+      "failures": [],
+      "id": "semantic-intake-003-document-rag",
+      "node": "semantic_intake_node",
+      "prompt": "Use LOTO procedure documents to explain lockout steps for machine M-CNC-01.",
+      "started_at": "2026-06-20T07:37:22.097497+00:00",
+      "status": "passed"
+    },
+    {
+      "behavior": "mutation",
+      "duration_ms": 34,
+      "error": null,
+      "evidence": {
+        "candidate_tool_windows": [],
+        "case_id": "semantic-intake-004-mutation",
+        "evidence_ledger": {
+          "evidence": []
+        },
+        "final_validation_result": null,
+        "graph_diagnostics": {
+          "capability_needs": [
+            {
+              "action": "update",
+              "constraints": {
+                "job_id": "JOB-BENCH-001",
+                "new_priority": "high",
+                "priority": "high",
+                "requires_approval": true
+              },
+              "entity": "job",
+              "known_args": {
+                "job_id": "JOB-BENCH-001"
+              },
+              "reason": "deterministic_source_hint:operational_state",
+              "requested_fields": [],
+              "requirement_id": "req-001",
+              "source_of_truth": "operational_state"
+            }
+          ],
+          "graph_state_phase": "phase1_contracts_only",
+          "phase3_last_node": "semantic_intake_node",
+          "phase3_node_order": [
+            "semantic_intake_node"
+          ],
+          "semantic_intake": {
+            "active_executable_roles": [
+              "required_requirement"
+            ],
+            "compiled_requirement_count": 1,
+            "compiler_authority": "deterministic",
+            "item_count": 1,
+            "prepared_clause_count": 1,
+            "proposer": "deterministic_fallback_semantic_intake_proposer",
+            "raw_llm_output_executes_tools": false,
+            "role_counts": {
+              "mutation_or_approval_request": 1
+            },
+            "runs_inside_langgraph_node": true,
+            "source": "deterministic_fallback",
+            "status": "compiled_in_langgraph_node"
+          }
+        },
+        "hydrated_tool_cards": [],
+        "node": "semantic_intake_node",
+        "node_order": [
+          "semantic_intake_node"
+        ],
+        "pending_approval": {
+          "approval_id": null,
+          "checkpoint_id": null,
+          "decision_id": null,
+          "ledger_revision": null,
+          "payload": {},
+          "requirement_id": null,
+          "status": "none",
+          "tool_call": null
+        },
+        "planner_decisions": [],
+        "planner_diagnostics": {
+          "capability_need_count": 1,
+          "execution_started": false,
+          "planner_kind": "planner_owned_agent_graph_phase1_state_contract",
+          "received_full_tool_catalog_before_need": false,
+          "saw_high_level_capability_map": true,
+          "saw_original_query": true,
+          "saw_requirement_ledger": true,
+          "semantic_intake": {
+            "compiled_in_langgraph_node": true,
+            "original_query_present": true,
+            "phase": "phase5_execution_observation"
+          }
+        },
+        "planner_proposer_diagnostics": null,
+        "provider": {
+          "llm_base_url_present": false,
+          "openai_api_key_present": true,
+          "openai_base_url_present": true,
+          "planner_model": "Qwen2.5-7B-Instruct-Q4_K_M.gguf",
+          "planner_openai_api_key_present": false,
+          "planner_openai_base_url_present": true
+        },
+        "rag_calls": [],
+        "requirement_ledger": {
+          "answer_instructions": [],
+          "clarification_needs": [],
+          "conditional_branches": [],
+          "formatting_instructions": [],
+          "intake_clauses": [
+            {
+              "branch_id": null,
+              "id": "clause-001",
+              "parent_requirement_id": null,
+              "reason": "executable_required_requirement",
+              "requirement_id": "req-001",
+              "role": "mutation_or_approval_request",
+              "text": "Change job JOB-BENCH-001 priority to high."
+            }
+          ],
+          "intake_diagnostics": {
+            "active_executable_roles": [
+              "required_requirement"
+            ],
+            "compiled_requirement_count": 1,
+            "compiler_authority": "deterministic",
+            "item_count": 1,
+            "prepared_clause_count": 1,
+            "proposer": "deterministic_fallback_semantic_intake_proposer",
+            "raw_llm_output_executes_tools": false,
+            "role_counts": {
+              "mutation_or_approval_request": 1
+            },
+            "source": "deterministic_fallback"
+          },
+          "requirements": [
+            {
+              "blockers": [],
+              "constraints": {
+                "job_id": "JOB-BENCH-001",
+                "new_priority": "high",
+                "priority": "high",
+                "requires_approval": true
+              },
+              "depends_on": [],
+              "derived_from_evidence_refs": [],
+              "derived_from_missing_reasons": [],
+              "entity": "job",
+              "evidence_refs": [],
+              "expansion_reason": null,
+              "goal": "Change job JOB-BENCH-001 priority to high.",
+              "id": "req-001",
+              "intent_operation": "stage_mutation",
+              "locked_constraints": [
+                "job_id",
+                "new_priority",
+                "priority",
+                "requires_approval"
+              ],
+              "origin": {
+                "constraints": "deterministic_extraction",
+                "fields": "metadata_field_aliases",
+                "goal": "deterministic_requirement_sketch",
+                "source_of_truth": "capability_map_hint"
+              },
+              "parent_requirement_id": null,
+              "requested_fields": [],
+              "required": true,
+              "requirement_type": "mutation_request",
+              "satisfaction_checks": [],
+              "source_of_truth": "operational_state",
+              "status": "open",
+              "superseded_by": null
+            }
+          ],
+          "revision": 1,
+          "revision_history": [
+            {
+              "actor": "deterministic_guard",
+              "change_type": "initial_requirement_sketch",
+              "details": {},
+              "locked_constraints_preserved": true,
+              "patch_id": null,
+              "reason": "Phase 3 locked hard constraints before planner execution.",
+              "requirement_id": null,
+              "revision": 1
+            }
+          ],
+          "user_goal": "Change job JOB-BENCH-001 priority to high."
+        },
+        "response_document_context": {
+          "diagnostics": {},
+          "document_id": null,
+          "evidence_refs": [],
+          "pending_approval_id": null,
+          "render_contract": null,
+          "requirement_ids": [
+            "req-001"
+          ],
+          "revision": 1,
+          "state": "not_started"
+        },
+        "satisfaction_state": {
+          "requirements": []
+        },
+        "selected_tool_names": [],
+        "selector_calls": [],
+        "tool_retrieval_diagnostics": {},
+        "trace_events": [
+          {
+            "event": "planner_owned_agent_graph_node",
+            "evidence_count": 0,
+            "ledger_revision": 1,
+            "node": "semantic_intake_node",
+            "planner_decision_count": 0,
+            "source_types": [],
+            "tool_names": []
+          }
+        ]
+      },
+      "failures": [],
+      "id": "semantic-intake-004-mutation",
+      "node": "semantic_intake_node",
+      "prompt": "Change job JOB-BENCH-001 priority to high.",
+      "started_at": "2026-06-20T07:37:23.424021+00:00",
+      "status": "passed"
+    },
+    {
+      "behavior": "multi-intent cascade",
+      "duration_ms": 36,
+      "error": null,
+      "evidence": {
+        "candidate_tool_windows": [],
+        "case_id": "semantic-intake-005-multi-intent-cascade",
+        "evidence_ledger": {
+          "evidence": []
+        },
+        "final_validation_result": null,
+        "graph_diagnostics": {
+          "capability_needs": [
+            {
+              "action": "read_one",
+              "constraints": {
+                "machine_id": "M-CNC-01",
+                "observation_fields": [
+                  "job_id",
+                  "active_job_id"
+                ]
+              },
+              "entity": "machine",
+              "known_args": {
+                "machine_id": "M-CNC-01"
+              },
+              "reason": "deterministic_source_hint:operational_state",
+              "requested_fields": [
+                "status"
+              ],
+              "requirement_id": "req-001",
+              "source_of_truth": "operational_state"
+            }
+          ],
+          "graph_state_phase": "phase1_contracts_only",
+          "phase3_last_node": "semantic_intake_node",
+          "phase3_node_order": [
+            "semantic_intake_node"
+          ],
+          "semantic_intake": {
+            "active_executable_roles": [
+              "required_requirement"
+            ],
+            "compiled_requirement_count": 1,
+            "compiler_authority": "deterministic",
+            "item_count": 2,
+            "prepared_clause_count": 2,
+            "proposer": "deterministic_fallback_semantic_intake_proposer",
+            "raw_llm_output_executes_tools": false,
+            "role_counts": {
+              "required_requirement": 2
+            },
+            "runs_inside_langgraph_node": true,
+            "source": "deterministic_fallback",
+            "status": "compiled_in_langgraph_node"
+          }
+        },
+        "hydrated_tool_cards": [],
+        "node": "semantic_intake_node",
+        "node_order": [
+          "semantic_intake_node"
+        ],
+        "pending_approval": {
+          "approval_id": null,
+          "checkpoint_id": null,
+          "decision_id": null,
+          "ledger_revision": null,
+          "payload": {},
+          "requirement_id": null,
+          "status": "none",
+          "tool_call": null
+        },
+        "planner_decisions": [],
+        "planner_diagnostics": {
+          "capability_need_count": 1,
+          "execution_started": false,
+          "planner_kind": "planner_owned_agent_graph_phase1_state_contract",
+          "received_full_tool_catalog_before_need": false,
+          "saw_high_level_capability_map": true,
+          "saw_original_query": true,
+          "saw_requirement_ledger": true,
+          "semantic_intake": {
+            "compiled_in_langgraph_node": true,
+            "original_query_present": true,
+            "phase": "phase5_execution_observation"
+          }
+        },
+        "planner_proposer_diagnostics": null,
+        "provider": {
+          "llm_base_url_present": false,
+          "openai_api_key_present": true,
+          "openai_base_url_present": true,
+          "planner_model": "Qwen2.5-7B-Instruct-Q4_K_M.gguf",
+          "planner_openai_api_key_present": false,
+          "planner_openai_base_url_present": true
+        },
+        "rag_calls": [],
+        "requirement_ledger": {
+          "answer_instructions": [],
+          "clarification_needs": [],
+          "conditional_branches": [
+            {
+              "activated_child_requirement_ids": [],
+              "condition": {
+                "field_any": [
+                  "job_id",
+                  "active_job_id"
+                ],
+                "source": "active_parent_evidence",
+                "type": "active_parent_evidence_has_any_field"
+              },
+              "derived_from_evidence_refs": [],
+              "diagnostics": {
+                "dependent_referent_guard": true,
+                "non_executable_until_condition_true": true,
+                "role": "conditional_branch"
+              },
+              "id": "branch-001",
+              "on_true": {
+                "action": "read_one",
+                "constraint_field": "job_id",
+                "entity": "job",
+                "fan_out": "first_value",
+                "intent_operation": "report_status",
+                "requirement_type": "single_entity_status",
+                "value_from_field_any": [
+                  "job_id",
+                  "active_job_id"
+                ]
+              },
+              "parent_requirement_id": "req-001",
+              "skipped_reason": null,
+              "status": "pending",
+              "text": "if it has an active job show that job status."
+            }
+          ],
+          "formatting_instructions": [],
+          "intake_clauses": [
+            {
+              "branch_id": null,
+              "id": "clause-001",
+              "parent_requirement_id": null,
+              "reason": "executable_required_requirement",
+              "requirement_id": "req-001",
+              "role": "required_requirement",
+              "text": "Show machine M-CNC-01 status"
+            },
+            {
+              "branch_id": "branch-001",
+              "id": "clause-002",
+              "parent_requirement_id": "req-001",
+              "reason": "conditional_branch_waits_for_parent_evidence",
+              "requirement_id": null,
+              "role": "conditional_branch",
+              "text": "if it has an active job show that job status."
+            }
+          ],
+          "intake_diagnostics": {
+            "active_executable_roles": [
+              "required_requirement"
+            ],
+            "compiled_requirement_count": 1,
+            "compiler_authority": "deterministic",
+            "item_count": 2,
+            "prepared_clause_count": 2,
+            "proposer": "deterministic_fallback_semantic_intake_proposer",
+            "raw_llm_output_executes_tools": false,
+            "role_counts": {
+              "required_requirement": 2
+            },
+            "source": "deterministic_fallback"
+          },
+          "requirements": [
+            {
+              "blockers": [],
+              "constraints": {
+                "machine_id": "M-CNC-01",
+                "observation_fields": [
+                  "job_id",
+                  "active_job_id"
+                ]
+              },
+              "depends_on": [],
+              "derived_from_evidence_refs": [],
+              "derived_from_missing_reasons": [],
+              "entity": "machine",
+              "evidence_refs": [],
+              "expansion_reason": null,
+              "goal": "Show machine M-CNC-01 status",
+              "id": "req-001",
+              "intent_operation": "report_status",
+              "locked_constraints": [
+                "machine_id",
+                "requested_fields"
+              ],
+              "origin": {
+                "constraints": "deterministic_extraction",
+                "fields": "metadata_field_aliases",
+                "goal": "deterministic_requirement_sketch",
+                "source_of_truth": "capability_map_hint"
+              },
+              "parent_requirement_id": null,
+              "requested_fields": [
+                "status"
+              ],
+              "required": true,
+              "requirement_type": "single_entity_status",
+              "satisfaction_checks": [],
+              "source_of_truth": "operational_state",
+              "status": "open",
+              "superseded_by": null
+            }
+          ],
+          "revision": 1,
+          "revision_history": [
+            {
+              "actor": "deterministic_guard",
+              "change_type": "initial_requirement_sketch",
+              "details": {},
+              "locked_constraints_preserved": true,
+              "patch_id": null,
+              "reason": "Phase 3 locked hard constraints before planner execution.",
+              "requirement_id": null,
+              "revision": 1
+            }
+          ],
+          "user_goal": "Show machine M-CNC-01 status, then if it has an active job show that job status."
+        },
+        "response_document_context": {
+          "diagnostics": {},
+          "document_id": null,
+          "evidence_refs": [],
+          "pending_approval_id": null,
+          "render_contract": null,
+          "requirement_ids": [
+            "req-001"
+          ],
+          "revision": 1,
+          "state": "not_started"
+        },
+        "satisfaction_state": {
+          "requirements": []
+        },
+        "selected_tool_names": [],
+        "selector_calls": [],
+        "tool_retrieval_diagnostics": {},
+        "trace_events": [
+          {
+            "event": "planner_owned_agent_graph_node",
+            "evidence_count": 0,
+            "ledger_revision": 1,
+            "node": "semantic_intake_node",
+            "planner_decision_count": 0,
+            "source_types": [],
+            "tool_names": []
+          }
+        ]
+      },
+      "failures": [],
+      "id": "semantic-intake-005-multi-intent-cascade",
+      "node": "semantic_intake_node",
+      "prompt": "Show machine M-CNC-01 status, then if it has an active job show that job status.",
+      "started_at": "2026-06-20T07:37:23.512970+00:00",
+      "status": "passed"
+    },
+    {
+      "behavior": "conditional follow-up",
+      "duration_ms": 35,
+      "error": null,
+      "evidence": {
+        "candidate_tool_windows": [],
+        "case_id": "semantic-intake-006-conditional-follow-up",
+        "evidence_ledger": {
+          "evidence": []
+        },
+        "final_validation_result": null,
+        "graph_diagnostics": {
+          "capability_needs": [
+            {
+              "action": "read_one",
+              "constraints": {
+                "machine_id": "M-CNC-01",
+                "observation_fields": [
+                  "job_id",
+                  "active_job_id"
+                ]
+              },
+              "entity": "machine",
+              "known_args": {
+                "machine_id": "M-CNC-01"
+              },
+              "reason": "deterministic_source_hint:operational_state",
+              "requested_fields": [],
+              "requirement_id": "req-001",
+              "source_of_truth": "operational_state"
+            }
+          ],
+          "graph_state_phase": "phase1_contracts_only",
+          "phase3_last_node": "semantic_intake_node",
+          "phase3_node_order": [
+            "semantic_intake_node"
+          ],
+          "semantic_intake": {
+            "active_executable_roles": [
+              "required_requirement"
+            ],
+            "compiled_requirement_count": 1,
+            "compiler_authority": "deterministic",
+            "item_count": 2,
+            "prepared_clause_count": 2,
+            "proposer": "deterministic_fallback_semantic_intake_proposer",
+            "raw_llm_output_executes_tools": false,
+            "role_counts": {
+              "required_requirement": 2
+            },
+            "runs_inside_langgraph_node": true,
+            "source": "deterministic_fallback",
+            "status": "compiled_in_langgraph_node"
+          }
+        },
+        "hydrated_tool_cards": [],
+        "node": "semantic_intake_node",
+        "node_order": [
+          "semantic_intake_node"
+        ],
+        "pending_approval": {
+          "approval_id": null,
+          "checkpoint_id": null,
+          "decision_id": null,
+          "ledger_revision": null,
+          "payload": {},
+          "requirement_id": null,
+          "status": "none",
+          "tool_call": null
+        },
+        "planner_decisions": [],
+        "planner_diagnostics": {
+          "capability_need_count": 1,
+          "execution_started": false,
+          "planner_kind": "planner_owned_agent_graph_phase1_state_contract",
+          "received_full_tool_catalog_before_need": false,
+          "saw_high_level_capability_map": true,
+          "saw_original_query": true,
+          "saw_requirement_ledger": true,
+          "semantic_intake": {
+            "compiled_in_langgraph_node": true,
+            "original_query_present": true,
+            "phase": "phase5_execution_observation"
+          }
+        },
+        "planner_proposer_diagnostics": null,
+        "provider": {
+          "llm_base_url_present": false,
+          "openai_api_key_present": true,
+          "openai_base_url_present": true,
+          "planner_model": "Qwen2.5-7B-Instruct-Q4_K_M.gguf",
+          "planner_openai_api_key_present": false,
+          "planner_openai_base_url_present": true
+        },
+        "rag_calls": [],
+        "requirement_ledger": {
+          "answer_instructions": [],
+          "clarification_needs": [],
+          "conditional_branches": [
+            {
+              "activated_child_requirement_ids": [],
+              "condition": {
+                "field_any": [
+                  "job_id",
+                  "active_job_id"
+                ],
+                "source": "active_parent_evidence",
+                "type": "active_parent_evidence_has_any_field"
+              },
+              "derived_from_evidence_refs": [],
+              "diagnostics": {
+                "dependent_referent_guard": true,
+                "non_executable_until_condition_true": true,
+                "role": "conditional_branch"
+              },
+              "id": "branch-001",
+              "on_true": {
+                "action": "read_one",
+                "constraint_field": "job_id",
+                "entity": "job",
+                "fan_out": "first_value",
+                "intent_operation": "report_status",
+                "requirement_type": "single_entity_status",
+                "value_from_field_any": [
+                  "job_id",
+                  "active_job_id"
+                ]
+              },
+              "parent_requirement_id": "req-001",
+              "skipped_reason": null,
+              "status": "pending",
+              "text": "if it is running, show the active job details."
+            }
+          ],
+          "formatting_instructions": [],
+          "intake_clauses": [
+            {
+              "branch_id": null,
+              "id": "clause-001",
+              "parent_requirement_id": null,
+              "reason": "executable_required_requirement",
+              "requirement_id": "req-001",
+              "role": "required_requirement",
+              "text": "Check machine M-CNC-01"
+            },
+            {
+              "branch_id": "branch-001",
+              "id": "clause-002",
+              "parent_requirement_id": "req-001",
+              "reason": "conditional_branch_waits_for_parent_evidence",
+              "requirement_id": null,
+              "role": "conditional_branch",
+              "text": "if it is running, show the active job details."
+            }
+          ],
+          "intake_diagnostics": {
+            "active_executable_roles": [
+              "required_requirement"
+            ],
+            "compiled_requirement_count": 1,
+            "compiler_authority": "deterministic",
+            "item_count": 2,
+            "prepared_clause_count": 2,
+            "proposer": "deterministic_fallback_semantic_intake_proposer",
+            "raw_llm_output_executes_tools": false,
+            "role_counts": {
+              "required_requirement": 2
+            },
+            "source": "deterministic_fallback"
+          },
+          "requirements": [
+            {
+              "blockers": [],
+              "constraints": {
+                "machine_id": "M-CNC-01",
+                "observation_fields": [
+                  "job_id",
+                  "active_job_id"
+                ]
+              },
+              "depends_on": [],
+              "derived_from_evidence_refs": [],
+              "derived_from_missing_reasons": [],
+              "entity": "machine",
+              "evidence_refs": [],
+              "expansion_reason": null,
+              "goal": "Check machine M-CNC-01",
+              "id": "req-001",
+              "intent_operation": "report_status",
+              "locked_constraints": [
+                "machine_id"
+              ],
+              "origin": {
+                "constraints": "deterministic_extraction",
+                "fields": "metadata_field_aliases",
+                "goal": "deterministic_requirement_sketch",
+                "source_of_truth": "capability_map_hint"
+              },
+              "parent_requirement_id": null,
+              "requested_fields": [],
+              "required": true,
+              "requirement_type": "single_entity_status",
+              "satisfaction_checks": [],
+              "source_of_truth": "operational_state",
+              "status": "open",
+              "superseded_by": null
+            }
+          ],
+          "revision": 1,
+          "revision_history": [
+            {
+              "actor": "deterministic_guard",
+              "change_type": "initial_requirement_sketch",
+              "details": {},
+              "locked_constraints_preserved": true,
+              "patch_id": null,
+              "reason": "Phase 3 locked hard constraints before planner execution.",
+              "requirement_id": null,
+              "revision": 1
+            }
+          ],
+          "user_goal": "Check machine M-CNC-01; if it is running, show the active job details."
+        },
+        "response_document_context": {
+          "diagnostics": {},
+          "document_id": null,
+          "evidence_refs": [],
+          "pending_approval_id": null,
+          "render_contract": null,
+          "requirement_ids": [
+            "req-001"
+          ],
+          "revision": 1,
+          "state": "not_started"
+        },
+        "satisfaction_state": {
+          "requirements": []
+        },
+        "selected_tool_names": [],
+        "selector_calls": [],
+        "tool_retrieval_diagnostics": {},
+        "trace_events": [
+          {
+            "event": "planner_owned_agent_graph_node",
+            "evidence_count": 0,
+            "ledger_revision": 1,
+            "node": "semantic_intake_node",
+            "planner_decision_count": 0,
+            "source_types": [],
+            "tool_names": []
+          }
+        ]
+      },
+      "failures": [],
+      "id": "semantic-intake-006-conditional-follow-up",
+      "node": "semantic_intake_node",
+      "prompt": "Check machine M-CNC-01; if it is running, show the active job details.",
+      "started_at": "2026-06-20T07:37:23.600997+00:00",
+      "status": "passed"
+    },
+    {
+      "behavior": "formatting instruction",
+      "duration_ms": 33,
+      "error": null,
+      "evidence": {
+        "candidate_tool_windows": [],
+        "case_id": "semantic-intake-007-formatting-instruction",
+        "evidence_ledger": {
+          "evidence": []
+        },
+        "final_validation_result": null,
+        "graph_diagnostics": {
+          "capability_needs": [
+            {
+              "action": "read_one",
+              "constraints": {
+                "machine_id": "M-CNC-01"
+              },
+              "entity": "machine",
+              "known_args": {
+                "machine_id": "M-CNC-01"
+              },
+              "reason": "deterministic_source_hint:operational_state",
+              "requested_fields": [
+                "status"
+              ],
+              "requirement_id": "req-001",
+              "source_of_truth": "operational_state"
+            }
+          ],
+          "graph_state_phase": "phase1_contracts_only",
+          "phase3_last_node": "semantic_intake_node",
+          "phase3_node_order": [
+            "semantic_intake_node"
+          ],
+          "semantic_intake": {
+            "active_executable_roles": [
+              "required_requirement"
+            ],
+            "compiled_requirement_count": 1,
+            "compiler_authority": "deterministic",
+            "item_count": 1,
+            "prepared_clause_count": 1,
+            "proposer": "deterministic_fallback_semantic_intake_proposer",
+            "raw_llm_output_executes_tools": false,
+            "role_counts": {
+              "required_requirement": 1
+            },
+            "runs_inside_langgraph_node": true,
+            "source": "deterministic_fallback",
+            "status": "compiled_in_langgraph_node"
+          }
+        },
+        "hydrated_tool_cards": [],
+        "node": "semantic_intake_node",
+        "node_order": [
+          "semantic_intake_node"
+        ],
+        "pending_approval": {
+          "approval_id": null,
+          "checkpoint_id": null,
+          "decision_id": null,
+          "ledger_revision": null,
+          "payload": {},
+          "requirement_id": null,
+          "status": "none",
+          "tool_call": null
+        },
+        "planner_decisions": [],
+        "planner_diagnostics": {
+          "capability_need_count": 1,
+          "execution_started": false,
+          "planner_kind": "planner_owned_agent_graph_phase1_state_contract",
+          "received_full_tool_catalog_before_need": false,
+          "saw_high_level_capability_map": true,
+          "saw_original_query": true,
+          "saw_requirement_ledger": true,
+          "semantic_intake": {
+            "compiled_in_langgraph_node": true,
+            "original_query_present": true,
+            "phase": "phase5_execution_observation"
+          }
+        },
+        "planner_proposer_diagnostics": null,
+        "provider": {
+          "llm_base_url_present": false,
+          "openai_api_key_present": true,
+          "openai_base_url_present": true,
+          "planner_model": "Qwen2.5-7B-Instruct-Q4_K_M.gguf",
+          "planner_openai_api_key_present": false,
+          "planner_openai_base_url_present": true
+        },
+        "rag_calls": [],
+        "requirement_ledger": {
+          "answer_instructions": [],
+          "clarification_needs": [],
+          "conditional_branches": [],
+          "formatting_instructions": [],
+          "intake_clauses": [
+            {
+              "branch_id": null,
+              "id": "clause-001",
+              "parent_requirement_id": null,
+              "reason": "executable_required_requirement",
+              "requirement_id": "req-001",
+              "role": "required_requirement",
+              "text": "Show machine M-CNC-01 status and answer in one compact table."
+            }
+          ],
+          "intake_diagnostics": {
+            "active_executable_roles": [
+              "required_requirement"
+            ],
+            "compiled_requirement_count": 1,
+            "compiler_authority": "deterministic",
+            "item_count": 1,
+            "prepared_clause_count": 1,
+            "proposer": "deterministic_fallback_semantic_intake_proposer",
+            "raw_llm_output_executes_tools": false,
+            "role_counts": {
+              "required_requirement": 1
+            },
+            "source": "deterministic_fallback"
+          },
+          "requirements": [
+            {
+              "blockers": [],
+              "constraints": {
+                "machine_id": "M-CNC-01"
+              },
+              "depends_on": [],
+              "derived_from_evidence_refs": [],
+              "derived_from_missing_reasons": [],
+              "entity": "machine",
+              "evidence_refs": [],
+              "expansion_reason": null,
+              "goal": "Show machine M-CNC-01 status and answer in one compact table.",
+              "id": "req-001",
+              "intent_operation": "report_status",
+              "locked_constraints": [
+                "machine_id",
+                "requested_fields"
+              ],
+              "origin": {
+                "constraints": "deterministic_extraction",
+                "fields": "metadata_field_aliases",
+                "goal": "deterministic_requirement_sketch",
+                "source_of_truth": "capability_map_hint"
+              },
+              "parent_requirement_id": null,
+              "requested_fields": [
+                "status"
+              ],
+              "required": true,
+              "requirement_type": "single_entity_status",
+              "satisfaction_checks": [],
+              "source_of_truth": "operational_state",
+              "status": "open",
+              "superseded_by": null
+            }
+          ],
+          "revision": 1,
+          "revision_history": [
+            {
+              "actor": "deterministic_guard",
+              "change_type": "initial_requirement_sketch",
+              "details": {},
+              "locked_constraints_preserved": true,
+              "patch_id": null,
+              "reason": "Phase 3 locked hard constraints before planner execution.",
+              "requirement_id": null,
+              "revision": 1
+            }
+          ],
+          "user_goal": "Show machine M-CNC-01 status and answer in one compact table."
+        },
+        "response_document_context": {
+          "diagnostics": {},
+          "document_id": null,
+          "evidence_refs": [],
+          "pending_approval_id": null,
+          "render_contract": null,
+          "requirement_ids": [
+            "req-001"
+          ],
+          "revision": 1,
+          "state": "not_started"
+        },
+        "satisfaction_state": {
+          "requirements": []
+        },
+        "selected_tool_names": [],
+        "selector_calls": [],
+        "tool_retrieval_diagnostics": {},
+        "trace_events": [
+          {
+            "event": "planner_owned_agent_graph_node",
+            "evidence_count": 0,
+            "ledger_revision": 1,
+            "node": "semantic_intake_node",
+            "planner_decision_count": 0,
+            "source_types": [],
+            "tool_names": []
+          }
+        ]
+      },
+      "failures": [],
+      "id": "semantic-intake-007-formatting-instruction",
+      "node": "semantic_intake_node",
+      "prompt": "Show machine M-CNC-01 status and answer in one compact table.",
+      "started_at": "2026-06-20T07:37:23.686777+00:00",
+      "status": "passed"
+    },
+    {
+      "behavior": "missing entity",
+      "duration_ms": 32,
+      "error": null,
+      "evidence": {
+        "candidate_tool_windows": [],
+        "case_id": "semantic-intake-008-missing-entity",
+        "evidence_ledger": {
+          "evidence": []
+        },
+        "final_validation_result": null,
+        "graph_diagnostics": {
+          "capability_needs": [],
+          "graph_state_phase": "phase1_contracts_only",
+          "phase3_last_node": "semantic_intake_node",
+          "phase3_node_order": [
+            "semantic_intake_node"
+          ],
+          "semantic_intake": {
+            "active_executable_roles": [
+              "required_requirement"
+            ],
+            "compiled_requirement_count": 0,
+            "compiler_authority": "deterministic",
+            "item_count": 1,
+            "prepared_clause_count": 1,
+            "proposer": "deterministic_fallback_semantic_intake_proposer",
+            "raw_llm_output_executes_tools": false,
+            "role_counts": {
+              "clarification_need": 1
+            },
+            "runs_inside_langgraph_node": true,
+            "source": "deterministic_fallback",
+            "status": "compiled_in_langgraph_node"
+          }
+        },
+        "hydrated_tool_cards": [],
+        "node": "semantic_intake_node",
+        "node_order": [
+          "semantic_intake_node"
+        ],
+        "pending_approval": {
+          "approval_id": null,
+          "checkpoint_id": null,
+          "decision_id": null,
+          "ledger_revision": null,
+          "payload": {},
+          "requirement_id": null,
+          "status": "none",
+          "tool_call": null
+        },
+        "planner_decisions": [],
+        "planner_diagnostics": {
+          "capability_need_count": 0,
+          "execution_started": false,
+          "planner_kind": "planner_owned_agent_graph_phase1_state_contract",
+          "received_full_tool_catalog_before_need": false,
+          "saw_high_level_capability_map": true,
+          "saw_original_query": true,
+          "saw_requirement_ledger": true,
+          "semantic_intake": {
+            "compiled_in_langgraph_node": true,
+            "original_query_present": true,
+            "phase": "phase5_execution_observation"
+          }
+        },
+        "planner_proposer_diagnostics": null,
+        "provider": {
+          "llm_base_url_present": false,
+          "openai_api_key_present": true,
+          "openai_base_url_present": true,
+          "planner_model": "Qwen2.5-7B-Instruct-Q4_K_M.gguf",
+          "planner_openai_api_key_present": false,
+          "planner_openai_base_url_present": true
+        },
+        "rag_calls": [],
+        "requirement_ledger": {
+          "answer_instructions": [],
+          "clarification_needs": [
+            {
+              "blocked_entity": "machine",
+              "id": "clarification-001",
+              "reason": "dependent_singular_read_missing_bound_entity",
+              "text": "Show the machine status."
+            }
+          ],
+          "conditional_branches": [],
+          "formatting_instructions": [],
+          "intake_clauses": [
+            {
+              "branch_id": null,
+              "id": "clause-001",
+              "parent_requirement_id": null,
+              "reason": "dependent_singular_read_missing_bound_entity",
+              "requirement_id": null,
+              "role": "clarification_need",
+              "text": "Show the machine status."
+            }
+          ],
+          "intake_diagnostics": {
+            "active_executable_roles": [
+              "required_requirement"
+            ],
+            "compiled_requirement_count": 0,
+            "compiler_authority": "deterministic",
+            "item_count": 1,
+            "prepared_clause_count": 1,
+            "proposer": "deterministic_fallback_semantic_intake_proposer",
+            "raw_llm_output_executes_tools": false,
+            "role_counts": {
+              "clarification_need": 1
+            },
+            "source": "deterministic_fallback"
+          },
+          "requirements": [],
+          "revision": 1,
+          "revision_history": [
+            {
+              "actor": "deterministic_guard",
+              "change_type": "initial_requirement_sketch",
+              "details": {},
+              "locked_constraints_preserved": true,
+              "patch_id": null,
+              "reason": "Phase 3 locked hard constraints before planner execution.",
+              "requirement_id": null,
+              "revision": 1
+            }
+          ],
+          "user_goal": "Show the machine status."
+        },
+        "response_document_context": {
+          "diagnostics": {},
+          "document_id": null,
+          "evidence_refs": [],
+          "pending_approval_id": null,
+          "render_contract": null,
+          "requirement_ids": [],
+          "revision": 1,
+          "state": "not_started"
+        },
+        "satisfaction_state": {
+          "requirements": []
+        },
+        "selected_tool_names": [],
+        "selector_calls": [],
+        "tool_retrieval_diagnostics": {},
+        "trace_events": [
+          {
+            "event": "planner_owned_agent_graph_node",
+            "evidence_count": 0,
+            "ledger_revision": 1,
+            "node": "semantic_intake_node",
+            "planner_decision_count": 0,
+            "source_types": [],
+            "tool_names": []
+          }
+        ]
+      },
+      "failures": [],
+      "id": "semantic-intake-008-missing-entity",
+      "node": "semantic_intake_node",
+      "prompt": "Show the machine status.",
+      "started_at": "2026-06-20T07:37:23.770223+00:00",
+      "status": "passed"
+    },
+    {
+      "behavior": "pronoun follow-up",
+      "duration_ms": 34,
+      "error": null,
+      "evidence": {
+        "candidate_tool_windows": [],
+        "case_id": "semantic-intake-009-pronoun-follow-up",
+        "evidence_ledger": {
+          "evidence": []
+        },
+        "final_validation_result": null,
+        "graph_diagnostics": {
+          "capability_needs": [
+            {
+              "action": "read_one",
+              "constraints": {
+                "machine_id": "M-CNC-01"
+              },
+              "entity": "machine",
+              "known_args": {
+                "machine_id": "M-CNC-01"
+              },
+              "reason": "deterministic_source_hint:operational_state",
+              "requested_fields": [],
+              "requirement_id": "req-001",
+              "source_of_truth": "operational_state"
+            }
+          ],
+          "graph_state_phase": "phase1_contracts_only",
+          "phase3_last_node": "semantic_intake_node",
+          "phase3_node_order": [
+            "semantic_intake_node"
+          ],
+          "semantic_intake": {
+            "active_executable_roles": [
+              "required_requirement"
+            ],
+            "compiled_requirement_count": 1,
+            "compiler_authority": "deterministic",
+            "item_count": 1,
+            "prepared_clause_count": 1,
+            "proposer": "deterministic_fallback_semantic_intake_proposer",
+            "raw_llm_output_executes_tools": false,
+            "role_counts": {
+              "required_requirement": 1
+            },
+            "runs_inside_langgraph_node": true,
+            "source": "deterministic_fallback",
+            "status": "compiled_in_langgraph_node"
+          }
+        },
+        "hydrated_tool_cards": [],
+        "node": "semantic_intake_node",
+        "node_order": [
+          "semantic_intake_node"
+        ],
+        "pending_approval": {
+          "approval_id": null,
+          "checkpoint_id": null,
+          "decision_id": null,
+          "ledger_revision": null,
+          "payload": {},
+          "requirement_id": null,
+          "status": "none",
+          "tool_call": null
+        },
+        "planner_decisions": [],
+        "planner_diagnostics": {
+          "capability_need_count": 1,
+          "execution_started": false,
+          "planner_kind": "planner_owned_agent_graph_phase1_state_contract",
+          "received_full_tool_catalog_before_need": false,
+          "saw_high_level_capability_map": true,
+          "saw_original_query": true,
+          "saw_requirement_ledger": true,
+          "semantic_intake": {
+            "compiled_in_langgraph_node": true,
+            "original_query_present": true,
+            "phase": "phase5_execution_observation"
+          }
+        },
+        "planner_proposer_diagnostics": null,
+        "provider": {
+          "llm_base_url_present": false,
+          "openai_api_key_present": true,
+          "openai_base_url_present": true,
+          "planner_model": "Qwen2.5-7B-Instruct-Q4_K_M.gguf",
+          "planner_openai_api_key_present": false,
+          "planner_openai_base_url_present": true
+        },
+        "rag_calls": [],
+        "requirement_ledger": {
+          "answer_instructions": [],
+          "clarification_needs": [],
+          "conditional_branches": [],
+          "formatting_instructions": [],
+          "intake_clauses": [
+            {
+              "branch_id": null,
+              "id": "clause-001",
+              "parent_requirement_id": null,
+              "reason": "executable_required_requirement",
+              "requirement_id": "req-001",
+              "role": "required_requirement",
+              "text": "For machine M-CNC-01, show its current job, show its deadline."
+            }
+          ],
+          "intake_diagnostics": {
+            "active_executable_roles": [
+              "required_requirement"
+            ],
+            "compiled_requirement_count": 1,
+            "compiler_authority": "deterministic",
+            "item_count": 1,
+            "prepared_clause_count": 1,
+            "proposer": "deterministic_fallback_semantic_intake_proposer",
+            "raw_llm_output_executes_tools": false,
+            "role_counts": {
+              "required_requirement": 1
+            },
+            "source": "deterministic_fallback"
+          },
+          "requirements": [
+            {
+              "blockers": [],
+              "constraints": {
+                "machine_id": "M-CNC-01"
+              },
+              "depends_on": [],
+              "derived_from_evidence_refs": [],
+              "derived_from_missing_reasons": [],
+              "entity": "machine",
+              "evidence_refs": [],
+              "expansion_reason": null,
+              "goal": "For machine M-CNC-01, show its current job, show its deadline.",
+              "id": "req-001",
+              "intent_operation": "report_status",
+              "locked_constraints": [
+                "machine_id"
+              ],
+              "origin": {
+                "constraints": "deterministic_extraction",
+                "fields": "metadata_field_aliases",
+                "goal": "deterministic_requirement_sketch",
+                "source_of_truth": "capability_map_hint"
+              },
+              "parent_requirement_id": null,
+              "requested_fields": [],
+              "required": true,
+              "requirement_type": "single_entity_status",
+              "satisfaction_checks": [],
+              "source_of_truth": "operational_state",
+              "status": "open",
+              "superseded_by": null
+            }
+          ],
+          "revision": 1,
+          "revision_history": [
+            {
+              "actor": "deterministic_guard",
+              "change_type": "initial_requirement_sketch",
+              "details": {},
+              "locked_constraints_preserved": true,
+              "patch_id": null,
+              "reason": "Phase 3 locked hard constraints before planner execution.",
+              "requirement_id": null,
+              "revision": 1
+            }
+          ],
+          "user_goal": "For machine M-CNC-01, show its current job and then show its deadline."
+        },
+        "response_document_context": {
+          "diagnostics": {},
+          "document_id": null,
+          "evidence_refs": [],
+          "pending_approval_id": null,
+          "render_contract": null,
+          "requirement_ids": [
+            "req-001"
+          ],
+          "revision": 1,
+          "state": "not_started"
+        },
+        "satisfaction_state": {
+          "requirements": []
+        },
+        "selected_tool_names": [],
+        "selector_calls": [],
+        "tool_retrieval_diagnostics": {},
+        "trace_events": [
+          {
+            "event": "planner_owned_agent_graph_node",
+            "evidence_count": 0,
+            "ledger_revision": 1,
+            "node": "semantic_intake_node",
+            "planner_decision_count": 0,
+            "source_types": [],
+            "tool_names": []
+          }
+        ]
+      },
+      "failures": [],
+      "id": "semantic-intake-009-pronoun-follow-up",
+      "node": "semantic_intake_node",
+      "prompt": "For machine M-CNC-01, show its current job and then show its deadline.",
+      "started_at": "2026-06-20T07:37:23.936236+00:00",
+      "status": "passed"
+    },
+    {
+      "behavior": "LLM repair/fallback",
+      "duration_ms": 39,
+      "error": null,
+      "evidence": {
+        "candidate_tool_windows": [],
+        "case_id": "semantic-intake-010-llm-repair-fallback",
+        "evidence_ledger": {
+          "evidence": []
+        },
+        "final_validation_result": null,
+        "graph_diagnostics": {
+          "capability_needs": [
+            {
+              "action": "read_one",
+              "constraints": {
+                "machine_id": "M-CNC-01"
+              },
+              "entity": "machine",
+              "known_args": {
+                "machine_id": "M-CNC-01"
+              },
+              "reason": "deterministic_source_hint:operational_state",
+              "requested_fields": [
+                "status"
+              ],
+              "requirement_id": "req-001",
+              "source_of_truth": "operational_state"
+            },
+            {
+              "action": "read",
+              "constraints": {},
+              "entity": null,
+              "known_args": {},
+              "reason": "deterministic_source_hint:unknown",
+              "requested_fields": [],
+              "requirement_id": "req-002",
+              "source_of_truth": "unknown"
+            }
+          ],
+          "graph_state_phase": "phase1_contracts_only",
+          "phase3_last_node": "semantic_intake_node",
+          "phase3_node_order": [
+            "semantic_intake_node"
+          ],
+          "semantic_intake": {
+            "active_executable_roles": [
+              "required_requirement"
+            ],
+            "compiled_requirement_count": 2,
+            "compiler_authority": "deterministic",
+            "item_count": 2,
+            "prepared_clause_count": 2,
+            "proposer": "deterministic_fallback_semantic_intake_proposer",
+            "raw_llm_output_executes_tools": false,
+            "role_counts": {
+              "required_requirement": 2
+            },
+            "runs_inside_langgraph_node": true,
+            "source": "deterministic_fallback",
+            "status": "compiled_in_langgraph_node"
+          }
+        },
+        "hydrated_tool_cards": [],
+        "node": "semantic_intake_node",
+        "node_order": [
+          "semantic_intake_node"
+        ],
+        "pending_approval": {
+          "approval_id": null,
+          "checkpoint_id": null,
+          "decision_id": null,
+          "ledger_revision": null,
+          "payload": {},
+          "requirement_id": null,
+          "status": "none",
+          "tool_call": null
+        },
+        "planner_decisions": [],
+        "planner_diagnostics": {
+          "capability_need_count": 2,
+          "execution_started": false,
+          "planner_kind": "planner_owned_agent_graph_phase1_state_contract",
+          "received_full_tool_catalog_before_need": false,
+          "saw_high_level_capability_map": true,
+          "saw_original_query": true,
+          "saw_requirement_ledger": true,
+          "semantic_intake": {
+            "compiled_in_langgraph_node": true,
+            "original_query_present": true,
+            "phase": "phase5_execution_observation"
+          }
+        },
+        "planner_proposer_diagnostics": null,
+        "provider": {
+          "llm_base_url_present": false,
+          "openai_api_key_present": true,
+          "openai_base_url_present": true,
+          "planner_model": "Qwen2.5-7B-Instruct-Q4_K_M.gguf",
+          "planner_openai_api_key_present": false,
+          "planner_openai_base_url_present": true
+        },
+        "rag_calls": [],
+        "requirement_ledger": {
+          "answer_instructions": [],
+          "clarification_needs": [],
+          "conditional_branches": [],
+          "formatting_instructions": [],
+          "intake_clauses": [
+            {
+              "branch_id": null,
+              "id": "clause-001",
+              "parent_requirement_id": null,
+              "reason": "executable_required_requirement",
+              "requirement_id": "req-001",
+              "role": "required_requirement",
+              "text": "Show status for M-CNC-01"
+            },
+            {
+              "branch_id": null,
+              "id": "clause-002",
+              "parent_requirement_id": null,
+              "reason": "executable_required_requirement",
+              "requirement_id": "req-002",
+              "role": "required_requirement",
+              "text": "make sure every requested clause is represented even if the model returns one item."
+            }
+          ],
+          "intake_diagnostics": {
+            "active_executable_roles": [
+              "required_requirement"
+            ],
+            "compiled_requirement_count": 2,
+            "compiler_authority": "deterministic",
+            "item_count": 2,
+            "prepared_clause_count": 2,
+            "proposer": "deterministic_fallback_semantic_intake_proposer",
+            "raw_llm_output_executes_tools": false,
+            "role_counts": {
+              "required_requirement": 2
+            },
+            "source": "deterministic_fallback"
+          },
+          "requirements": [
+            {
+              "blockers": [],
+              "constraints": {
+                "machine_id": "M-CNC-01"
+              },
+              "depends_on": [],
+              "derived_from_evidence_refs": [],
+              "derived_from_missing_reasons": [],
+              "entity": "machine",
+              "evidence_refs": [],
+              "expansion_reason": null,
+              "goal": "Show status for M-CNC-01",
+              "id": "req-001",
+              "intent_operation": "report_status",
+              "locked_constraints": [
+                "machine_id",
+                "requested_fields"
+              ],
+              "origin": {
+                "constraints": "deterministic_extraction",
+                "fields": "metadata_field_aliases",
+                "goal": "deterministic_requirement_sketch",
+                "source_of_truth": "capability_map_hint"
+              },
+              "parent_requirement_id": null,
+              "requested_fields": [
+                "status"
+              ],
+              "required": true,
+              "requirement_type": "single_entity_status",
+              "satisfaction_checks": [],
+              "source_of_truth": "operational_state",
+              "status": "open",
+              "superseded_by": null
+            },
+            {
+              "blockers": [],
+              "constraints": {},
+              "depends_on": [],
+              "derived_from_evidence_refs": [],
+              "derived_from_missing_reasons": [],
+              "entity": null,
+              "evidence_refs": [],
+              "expansion_reason": null,
+              "goal": "make sure every requested clause is represented even if the model returns one item.",
+              "id": "req-002",
+              "intent_operation": "request_clarification",
+              "locked_constraints": [],
+              "origin": {
+                "constraints": "deterministic_extraction",
+                "fields": "metadata_field_aliases",
+                "goal": "deterministic_requirement_sketch",
+                "source_of_truth": "capability_map_hint"
+              },
+              "parent_requirement_id": null,
+              "requested_fields": [],
+              "required": true,
+              "requirement_type": "clarification_request",
+              "satisfaction_checks": [],
+              "source_of_truth": "unknown",
+              "status": "open",
+              "superseded_by": null
+            }
+          ],
+          "revision": 1,
+          "revision_history": [
+            {
+              "actor": "deterministic_guard",
+              "change_type": "initial_requirement_sketch",
+              "details": {},
+              "locked_constraints_preserved": true,
+              "patch_id": null,
+              "reason": "Phase 3 locked hard constraints before planner execution.",
+              "requirement_id": null,
+              "revision": 1
+            }
+          ],
+          "user_goal": "Show status for M-CNC-01; then make sure every requested clause is represented even if the model returns one item."
+        },
+        "response_document_context": {
+          "diagnostics": {},
+          "document_id": null,
+          "evidence_refs": [],
+          "pending_approval_id": null,
+          "render_contract": null,
+          "requirement_ids": [
+            "req-001",
+            "req-002"
+          ],
+          "revision": 1,
+          "state": "not_started"
+        },
+        "satisfaction_state": {
+          "requirements": []
+        },
+        "selected_tool_names": [],
+        "selector_calls": [],
+        "tool_retrieval_diagnostics": {},
+        "trace_events": [
+          {
+            "event": "planner_owned_agent_graph_node",
+            "evidence_count": 0,
+            "ledger_revision": 1,
+            "node": "semantic_intake_node",
+            "planner_decision_count": 0,
+            "source_types": [],
+            "tool_names": []
+          }
+        ]
+      },
+      "failures": [],
+      "id": "semantic-intake-010-llm-repair-fallback",
+      "node": "semantic_intake_node",
+      "prompt": "Show status for M-CNC-01; then make sure every requested clause is represented even if the model returns one item.",
+      "started_at": "2026-06-20T07:37:24.028303+00:00",
+      "status": "passed"
+    }
+  ],
+  "updated_at": "2026-06-20T07:37:24.068501+00:00"
+}

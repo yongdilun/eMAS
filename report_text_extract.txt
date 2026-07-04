@@ -1,0 +1,4518 @@
+
+
+--- PAGE 1 ---
+ 
+Prepared by: Yong DI Lun                                          CPT6324 Project                                                               2610 Term 
+ 
+ 
+ 
+FINAL YEAR PROJECT REPORT 
+ 
+FYP02-SE-T2610-0282 
+Engineering Management AI Agentic System 
+(eMAS) 
+ 
+ 
+ 
+1211110326 
+YONG DI LUN 
+ 
+ 
+ 
+ 
+BACHELOR OF COMPUTER SCIENCE 
+B.CS (HONS) SOFTWARE ENGINEERING 
+JULY 2026 
+
+
+--- PAGE 2 ---
+ 
+Prepared by: Yong DI Lun                                          CPT6324 Project                                                               2610 Term 
+ 
+FYP02-SE-T2610-0282 
+Engineering Management AI Agentic System 
+(eMAS) 
+ 
+BY 
+ 
+1211110326 
+YONG DI LUN 
+ 
+FINAL YEAR PROJECT REPORT SUBMITTED IN PARTIAL FULFILMENT OF THE  
+ 
+REQUIREMENT FOR THE DEGREE OF 
+ 
+BACHELOR OF COMPUTER SCIENCE 
+B.CS (HONS) SOFTWARE ENGINEERING 
+ 
+in the  
+ 
+Faculty of Computing and Informatics 
+ 
+ 
+MULTIMEDIA UNIVERSITY  
+MALAYSIA 
+ 
+JULY 2026
+
+
+--- PAGE 3 ---
+i 
+ 
+COPYRIGHT 
+© <2026> Universiti Telekom Sdn. Bhd. ALL RIGHTS RESERVED. 
+ 
+Copyright of this report belongs to Universiti Telekom Sdn.  Bhd.  as qualified 
+by Regulation 7.2 (c) of the Multimedia University Intellectual Property and 
+Commercialisation Policy. No part of this publication may be reproduced, 
+stored in or introduced into a retrieval system, or transmitted in any form or by 
+any means (electronic, mechanical, photocopying, recording, or otherwise), or 
+for any purpose, without the express written permission of Universiti Telekom 
+Sdn. Bhd. Due acknowledgement shall always be made of the use of any 
+material contained in, or derived from, this report. 
+ 
+
+
+--- PAGE 4 ---
+ii 
+ 
+DECLARATION 
+I hereby declare that the work has been done by myself and no portion of the 
+work contained in this report has been submitted in support of any application 
+for any other degree or qualification of this or any other university or institution 
+of learning. 
+ 
+ 
+ 
+ 
+__________________________ 
+Name: Yong Di Lun 
+Faculty of Computing & Informatics 
+Multimedia University 
+Date: 20 JUNE 2026 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+
+
+--- PAGE 5 ---
+iii 
+ 
+ACKNOWLEDGEMENT 
+I would like to take this opportunity to express my deepest appreciation to my 
+supervisor, Dr. Ho Sin Ban, for his continuous guidance, support, and 
+encouragement throughout the completion of this project. His expertise in 
+software engineering and intelligent systems has greatly contributed to the 
+development of the Engineering Management AI Agentic System (eMAS). I am 
+sincerely grateful for the time and effort he devoted to reviewing my work and 
+providing constructive feedback, which helped me enhance the quality and 
+direction of this research. 
+I also would like to mention that the Faculty of Computing and Informatics (FCI) 
+at Multimedia University (MMU) has offered the facilities, resources, and a 
+favorable learning environment. The experience I obtained during the Bachelor 
+of Computer Science program was relevant in assisting me to comprehend 
+and address the issues addressed in this report. 
+Finally, I owe my family immense debt of gratitude as it has always supported, 
+been patient and encouraged me. The trust that they placed in me provided 
+the strength and inspiration to press onwards despite the difficulties to 
+accomplish this final report. 
+ 
+Yong Di Lun 
+JUNE 2026 
+ 
+ 
+
+
+--- PAGE 6 ---
+iv 
+ 
+ABSTRACT 
+This paper presents the Engineering Management AI Agentic System (eMAS), 
+a full-stack manufacturing management prototype designed to support factory 
+operations through natural-language interaction, intelligent decision support, 
+and workflow automation. Traditional engineering management systems often 
+require users to navigate multiple menus, manually search operational data, 
+and prepare schedules or reports with high effort. To address this issue, eMAS 
+integrates a React-based frontend, a Go/Gin backend API, a MySQL database, 
+and a Python FastAPI Factory Agent that connects user requests to backend 
+tools through an agent workflow. 
+The system supports common manufacturing management tasks such as job 
+scheduling, production data access, reporting, dashboard visualisation, 
+machine and inventory queries, material shortage handling, and approval-
+controlled operational actions. Retrieval-augmented generation (RAG) is also 
+used to support document-based advisory responses where relevant. The 
+system was evaluated using simulated factory data, seeded manufacturing 
+scenarios, automated test results, system logs, end-to-end workflow evidence, 
+and a task-based usability survey. 
+The evaluation results show that eMAS can reduce manual interaction, 
+improve access to operational information, and provide safer AI-assisted 
+decision support in a smart manufacturing environment. The final executed 
+frontend unit/component and Playwright end-to-end verification gates recorded 
+0 failed tests, while the user survey achieved an overall mean score of 4.71 
+out of 5.00. These findings indicate that eMAS is a functional and usable 
+prototype for AI-assisted manufacturing management, although further 
+validation with live factory data and real industrial users is recommended for 
+future work. 
+ 
+
+
+--- PAGE 7 ---
+v 
+ 
+Table of Contents 
+COPYRIGHT ................................................................................................ i 
+DECLARATION ........................................................................................... ii 
+ACKNOWLEDGEMENT ............................................................................. iii 
+ABSTRACT ................................................................................................ iv 
+Table of Contents ........................................................................................ v 
+List of Tables .............................................................................................viii 
+List of Figures............................................................................................. ix 
+List of Abbreviations/Symbols ..................................................................... ix 
+List of Appendices ....................................................................................... x 
+Chapter 1 
+Introduction ............................................................................. 1 
+1.1 
+Background of Research ................................................................ 1 
+1.2 
+Problem Statement ........................................................................ 2 
+1.3 
+Research Purpose ......................................................................... 3 
+1.4 
+Objectives of the Research ............................................................ 4 
+1.5 
+Research Questions ...................................................................... 4 
+1.6 
+Project Scope ................................................................................ 5 
+1.7 
+Significance of the Research .......................................................... 5 
+1.8 
+Summary ....................................................................................... 6 
+Chapter 2 
+Literature Review .................................................................... 7 
+2.1 
+Introduction.................................................................................... 7 
+2.2 
+Industry 4.0.................................................................................... 8 
+2.2.1 
+Overview of Industry 4.0 .............................................................................8 
+2.2.2 
+Connectivity and Interoperability ...............................................................9 
+2.2.3 
+Challenges in Modern Manufacturing.......................................................10 
+2.2.4 
+Concept of Intelligent Agents ...................................................................11 
+
+
+--- PAGE 8 ---
+vi 
+ 
+2.2.5 
+Multi-Agent Systems in Manufacturing .....................................................13 
+2.2.6 
+Benefits and Challenges of MAS...............................................................14 
+2.3 
+Natural Language Processing and Decision Support Systems ...... 15 
+2.3.1 
+NLP for Industrial Applications .................................................................16 
+2.3.2 
+Data Visualization in Manufacturing Management ...................................17 
+2.3.3 
+AI-Based Decision Support Systems ........................................................18 
+2.3.4 
+LLM-Based Agentic Systems and Tool Use ...............................................19 
+2.3.5 
+Retrieval-Augmented Generation in Industrial Knowledge Support ..........20 
+2.3.6 
+Human-in-the-Loop Approval for Safe AI Automation ..............................21 
+2.3.7 
+API-Based Interoperability and Tool Registry ............................................22 
+2.4 
+Comparison Study of eMAS and Existing Industrial Solutions........ 23 
+2.4.1 
+Comparison Criteria.................................................................................23 
+2.4.2 
+Systems Selected for Comparison ...........................................................23 
+2.4.3 
+Comparative Analysis ..............................................................................23 
+2.4.4 
+Conclusion...............................................................................................30 
+2.5 
+Research Gap ............................................................................. 31 
+2.6 
+Summary ..................................................................................... 32 
+Chapter 3 
+Theoretical Framework.......................................................... 33 
+3.1 
+Introduction.................................................................................. 33 
+3.2 
+Artificial Intelligence Agent Theory and the BDI Model .................. 34 
+3.3 
+Natural Language Processing as the Human–Agent Interface ....... 34 
+3.4 
+Cyber-Physical Systems (CPS) and Smart Factory Context .......... 36 
+3.5 
+Multi-Agent System Concepts and Agent Coordination ................. 37 
+3.6 
+Decision Support System (DSS) Theory ....................................... 38 
+3.7 
+Integrated Theoretical Framework of eMAS .................................. 39 
+3.7.1 
+Mapping of Theoretical Concepts to Current eMAS Implementation ........40 
+3.8 
+Summary ..................................................................................... 42 
+Chapter 4 
+Research Methodology ......................................................... 43 
+4.1 
+Introduction.................................................................................. 43 
+
+
+--- PAGE 9 ---
+vii 
+ 
+4.2 
+Research Design ......................................................................... 44 
+4.3 
+System Development Methodology .............................................. 44 
+4.3.1 
+Requirements Collection .........................................................................45 
+4.3.2 
+System Architecture Design .....................................................................47 
+4.3.3 
+Development Stages ................................................................................49 
+4.3.4 
+Tools and Technologies ............................................................................49 
+4.4 
+Evaluation Framework ................................................................. 50 
+4.4.1 
+Functionality Evaluation...........................................................................51 
+4.4.2 
+Scheduling and Shortage Resolution Evaluation ......................................52 
+4.4.3 
+Factory Agent and AI-Assisted Interaction Evaluation ..............................53 
+4.4.4 
+Safety and Approval Workflow Evaluation ................................................54 
+4.4.5 
+Reliability and End-to-End Testing Evaluation ..........................................54 
+4.4.6 
+Usability and Proxy-User Evaluation.........................................................55 
+4.5 
+Data Collection Methods .............................................................. 56 
+4.6 
+Data Analysis Techniques ............................................................ 57 
+4.7 
+Reliability and Validity .................................................................. 58 
+Chapter 5 
+DATA ANALYSIS AND RESULTS .......................................... 59 
+5.1 
+Introduction.................................................................................. 59 
+5.2 
+Overview of Evaluation Data ........................................................ 59 
+5.3 
+Simulated Factory Dataset Analysis.............................................. 61 
+5.4 
+Functional Module Results ........................................................... 61 
+5.5 
+Scheduling and Shortage Resolution Results ............................... 62 
+5.6 
+Factory Agent and AI Assistant Results......................................... 64 
+5.7 
+Safety and Approval Workflow Results ......................................... 65 
+5.8 
+Reliability and Automated Testing Results..................................... 66 
+5.9 
+End-to-End Workflow Results ....................................................... 68 
+5.10 
+User Survey and Usability Feedback Results................................ 69 
+Chapter 6 
+DISCUSSION ....................................................................... 74 
+
+
+--- PAGE 10 ---
+viii 
+ 
+6.1 
+Introduction.................................................................................. 74 
+6.2 
+Discussion of System Functionality .............................................. 75 
+6.3 
+Discussion of Scheduling and Shortage Resolution ...................... 76 
+6.4 
+Discussion of Factory Agent and AI-Assisted Interaction ............... 77 
+6.5 
+Discussion of Safety and Approval Control ................................... 78 
+6.6 
+Discussion of Reliability and Testing ............................................. 79 
+6.7 
+Discussion of User Survey Results ............................................... 79 
+6.8 
+Limitations of the Current Evaluation ............................................ 80 
+6.9 
+Summary ..................................................................................... 81 
+Chapter 7 
+CONCLUSION AND RECOMMENDATIONS ......................... 81 
+7.1 
+Introduction.................................................................................. 81 
+7.2 
+Achievement of Project Objectives ............................................... 82 
+7.3 
+Conclusion .................................................................................. 83 
+7.4 
+Recommendations ....................................................................... 83 
+7.5 
+Future Work................................................................................. 85 
+7.6 
+Final Summary ............................................................................ 86 
+References................................................................................................ 87 
+Appendix ................................................................................................... 92 
+Appendix A: Meeting Logs ...................................................................... 92 
+Appendix B : Turnitin Similarity Index Page ........................................... 128 
+ 
+ 
+List of Tables 
+Table 2.1 Summary of comparison .............................................................................30 
+Table 3.1 Mapping of Theoretical Concepts to eMAS ...............................................40 
+Table 5.1 Evaluation data overview ............................................................................60 
+
+
+--- PAGE 11 ---
+ix 
+ 
+Table 5.2 Functional Module Results .........................................................................62 
+Table 5.3 Scheduling and Shortage Resolution Results..............................................63 
+Table 5.4 Factory Agent and AI Assistant Results .....................................................64 
+Table 5.5 Safety and Approval Workflow Results .....................................................65 
+Table 5.6 Reliability and Automated Testing Results ................................................67 
+Table 5.7 End-to-End Workflow Results ....................................................................68 
+Table 5.8 Mean Score of User Survey Items ..............................................................70 
+Table 5.9 Response Distribution of User Survey Items ..............................................71 
+ 
+List of Figures 
+Figure 2.1: Gantt chart view from SkyPlanner. ..........................................................24 
+Figure 2.2: SkyPlanner data input panel. ....................................................................25 
+Figure 2.3: SkyPlanner Global Rules Overview .........................................................26 
+Figure 2.4: SkyPlanner Scheduling Rule Settings ......................................................27 
+Figure 2.5: Siemens Opcenter dashboard....................................................................28 
+Figure 2.6: Opcenter system configuration panel. ......................................................28 
+Figure 2.7: Opcenter production simulation view.......................................................29 
+Figure 3.1: eMAS theorical framework. .....................................................................40 
+Figure 4.1: System Development Life Cycle (SDLC) Overview Diagram ................45 
+Figure 4.2: Requirements Gathering Process ..............................................................47 
+Figure 4.3: eMAS System Architecture Diagram .......................................................49 
+Figure 4.4: Development Stages Diagram ..................................................................49 
+Figure 4.5: Technology Stack Diagram ......................................................................50 
+Figure 5.1 Mean Score of User Survey Items .............................................................71 
+Figure 5.2 Positive Response Rate of User Survey Items...........................................73 
+ 
+List of Abbreviations/Symbols 
+• API - Application Programming Interface 
+• AI: Artificial Intelligence 
+• APS: Advanced Planning and Scheduling 
+• ARM64: 64-bit Advanced RISC Machine architecture (specifically 
+• Kunpeng CPUs) 
+• B.CS: Bachelor of Computer Science 
+• BDI: Belief, Desire, and Intention model 
+• CPS: Cyber-Physical System 
+• DBSS: Database Security Service 
+• DRL: Deep Reinforcement Learning 
+• DSS: Decision Support System 
+
+
+--- PAGE 12 ---
+x 
+ 
+• ECS: Elastic Cloud Server 
+• ELB: Elastic Load Balance 
+• eMAS: Engineering Management AI Agentic System 
+• ERP: Enterprise Resource Planning 
+• FYP: Final Year Project 
+• HSS: Host Security Service 
+• IAM: Identity and Access Management 
+• ICT: Information and Communication Technology 
+• IoT: Internet of Things 
+• KPI: Key Performance Indicator 
+• LLM: Large Language Model 
+• MARL: Multi-Agent Reinforcement Learning 
+• MAS: Multi-Agent System 
+• MES: Manufacturing Execution System 
+• MMU: Multimedia University 
+• NLP: Natural Language Processing 
+• OBS: Object Storage Service 
+• REST: Representational State Transfer 
+• RMFS: Robotic Mobile Fulfillment System 
+• SDLC: System Development Life Cycle 
+• SME: Small and Medium-sized Enterprise 
+• VPC: Virtual Private Cloud 
+• x86: Intel’s 32/64-bit instruction set architecture 
+List of Appendices 
+1. Appendix A: Meeting Logs 
+2. Appendix B: Turnitin Similarity Index Page 
+3. Appendix C: Automated Test Evidence 
+4. Appendix D: Survey Questionnaire and Raw Responses
+ 
+
+
+--- PAGE 13 ---
+ 
+1 
+ 
+Chapter 1 Introduction  
+1.1 Background of Research  
+Today's manufacturing sectors are growing increasingly competitive and 
+complex. For modern factories to remain productive, processes must be 
+straightforward, and digital technologies must be highly accurate. The 
+Industrie 4.0 Final Report states that information and communication 
+technology (ICT) already supports around 90% of industrial manufacturing 
+processes in Germany, demonstrating the significance of digital systems for 
+manufacturing (Kagermann et al., 2013). 
+ 
+Furthermore, production is also becoming more automated and connected. 
+Industry 4.0 is based on smart networking between machines, systems, and 
+products, using tools like the embedded systems, Internet of Things, and data 
+sync (Kagermann et al., 2013). These technologies help machines work 
+together, communicate, and even make some decisions on their own. 
+Research shows that Industry 4.0 supports flexible and self-managing 
+production, which improves efficiency and makes it easier to create 
+customized products (Kagermann et al., 2013). 
+ 
+Although major businesses have been quick to embrace Industry 4.0, most of 
+the small and medium-sized businesses (SMEs) are yet to embrace advanced 
+digital management systems because of the expense, complexity of the 
+system, and high technical expertise. 
+ 
+Consequently, there is increased need to have lightweight and friendly to use 
+and intelligent factory management devices that do not necessitate some high 
+levels of technical expertise to carry out the whole process of making decisions. 
+ 
+
+
+--- PAGE 14 ---
+ 
+2 
+ 
+With the ongoing development of factories, there is an increasing need to have 
+systems that will be able to unify data, disseminate information effectively, and 
+assist in making timely decisions. This movement has also increased the rate 
+of artificial intelligence (AI) technology adoption, specifically, AI agents, as a 
+way of increasing the smarts of systems and their usability in manufacturing 
+settings. 
+ 
+In recent years, Artificial Intelligence (AI) has become a crucial tool for making 
+work systems better. AI agents are computer programs that can notice what 
+is happening, learn from information, and respond to different situations. They 
+help people by giving quick access to useful details and by taking over 
+repetitive tasks. AI also has been solving problems by planning the steps 
+needed to reach a goal for a long time. These systems observe the situation, 
+understand the possible actions, and choose the best way to solve the 
+problem. In manufacturing, this is helpful for tasks that consist of a lot of steps 
+automatically. Since the 1970s, industry has employed this type of AI. The 
+structure of intelligent agents, including simple ones that just react to what 
+they sense and more advanced ones that remember information, helps design 
+machine programs so machines can work safely and effectively in different 
+situations (Russell, Stuart & Norvig, 2021).  
+ 
+Many traditional engineering management systems still require users to set up 
+schedules by hand, click through multiple menus, and read complex data. This 
+makes daily work slower and increases the chances of mistakes. 
+ 
+1.2 Problem Statement  
+Research shows that smart agents are becoming increasingly vital in 
+manufacturing because they assist machines in working smarter and react 
+faster. For example, an agent can notice if a tool is wearing out and take the 
+right action (Park & Tran, 2017). They can communicate with other machines, 
+operate independently, adjust to changing conditions, and assist in problem-
+
+
+--- PAGE 15 ---
+ 
+3 
+ 
+solving. In essence, they perceive, reason, and behave somewhat like people 
+do when making choices. 
+ 
+However, many factories still do not use these intelligent systems. The 
+commercial manufacturing execution and planning systems currently in place 
+are considered very expensive to use, difficult to set up and demand technical 
+expertise to maintain. This renders them inappropriate or unfeasible to the 
+SMEs, which usually have relatively small budgets and less technical staff. 
+One reason is that they are difficult to integrate, lack standardization, and can 
+be complicated to manage (Pulikottil et al., 2023). At the same time, modern 
+manufacturing requires systems that can work autonomously, react in real 
+time, share information smoothly, and adapt quickly when something changes. 
+Multi-Agent Systems (MAS) are known to be helpful for tasks like planning, 
+scheduling, monitoring, and handling unexpected problems (Pulikottil et al., 
+2023). But many factories still use old, centralized systems that are rigid and 
+not flexible enough to support intelligent decision taking  (Pulikottil et al., 2023). 
+ 
+Because of these issues, there is a gap between what modern factories need 
+and what current systems can do. Workers still must manually schedule jobs, 
+look for data, and make reports, which take time and can lead to mistakes.  
+ 
+1.3 Research Purpose  
+This study aims to show how an agentic system powered by AI can enhance 
+engineering management within a smart manufacturing setting through the 
+obligation to change the normal operational controlling mode of the interface 
+into intelligent, conversational, and autonomous assistance. 
+ 
+This paper aims to create a viable vision of how artificial intelligence can be 
+applied in the management of a factory in a manner that can improve human 
+possibilities and not to substitute them. The study will help achieve more 
+
+
+--- PAGE 16 ---
+ 
+4 
+ 
+responsive and adaptable manufacturing processes that are more human-
+centric because it helps to generate insights faster, provide proactive help, and 
+engage more effectively with complex production systems. 
+ 
+In the end, the work hopes to demonstrate how agentic AI systems can 
+become a core technology of the next generation of the field of engineering 
+management, and how to make smarter decisions and more resilient factory 
+processes in an Industry 4.0 environment. 
+ 
+1.4 Objectives of the Research  
+1. To develop eMAS as a full-stack manufacturing management prototype 
+with frontend, backend API, database, and AI assistant components. 
+2. To support natural-language interaction for common engineering 
+management tasks such as scheduling, reporting, production queries, 
+and data visualization. 
+3. To automate selected factory-management workflows while keeping 
+business-changing actions under human approval. 
+4. To provide decision support for scheduling, shortages, machine and 
+resource status, inventory information, and operational reports. 
+5. To evaluate eMAS using simulated factory data, task-based usability 
+measures, system logs, and automated test scenarios. 
+1.5 Research Questions  
+1. How effectively can eMAS understand natural-language requests 
+related to factory management tasks? 
+2. Can eMAS reduce manual interactions for scheduling, reporting, and 
+production-data access compared with menu-based workflows? 
+3. How useful are the AI assistant’s recommendations for scheduling, 
+shortage handling, and operational decision support? 
+4. Does the approval workflow help keep automated business-changing 
+actions safe and traceable? 
+
+
+--- PAGE 17 ---
+ 
+5 
+ 
+5. How reliable is eMAS when tested with simulated factory data and 
+representative operational scenarios? 
+1.6 Project Scope  
+The scope of this project covers the design, implementation, and evaluation 
+of the Engineering Management AI Agentic System (eMAS) as a full-stack 
+manufacturing management prototype. The system includes a React-based 
+frontend interface, a Go/Gin backend API, a MySQL database, and a Python 
+FastAPI Factory Agent that allows users to interact with the system through 
+natural-language requests. The prototype supports factory-management 
+functions such as job scheduling, production data viewing, dashboard 
+visualization, reporting, inventory and machine-resource queries, shortage 
+analysis, and AI-assisted recommendations. The Factory Agent is connected 
+to backend tools and can assist users by retrieving operational data, preparing 
+responses, and supporting selected workflow actions. For actions that may 
+change business data, the system applies a human approval process before 
+execution. 
+ 
+This project is limited to a simulated or sample-data manufacturing 
+environment and does not involve direct control of physical machines, real-
+time sensor integration, or deployment in a live industrial factory. The purpose 
+is to evaluate whether an AI-assisted engineering management prototype can 
+reduce manual interaction, improve access to factory information, and support 
+better decision-making in representative manufacturing scenarios. 
+ 
+1.7 Significance of the Research  
+This study is important because it focuses on the issues that remain 
+unresolved by the contemporary factories whose management systems still 
+are manual and intricate. The study illustrates that AI agents can ease the 
+factory management systems, decrease the operational delays, and enhance 
+
+
+--- PAGE 18 ---
+ 
+6 
+ 
+the accuracy of the decisions made by incorporating the Engineering 
+Management AI Agentic System (eMAS). 
+ 
+An important addition of this study is the application of natural language 
+interface in the management of factories. This design reduces the barrier to 
+entry of the non-technical personnel as the non-technical personnel are able 
+to communicate with complex systems through simple, human readable 
+commands as opposed to special software interfaces. This is especially useful 
+in the factory setting where employees might not receive high-level IT training 
+yet they have to handle data-heavy processes. 
+ 
+To the factory workers and managers, eMAS lowers manual repetitive tasks 
+like scheduling and report writing and makes the production data easier to 
+understand and view. In the case of the manufacturing business, the study 
+brings out the potential benefits of AI-driven lightweight systems to enhance 
+productivity, minimize errors, and increase the degree of adaptability without 
+necessarily incurring the cost of enterprise-level solutions. Research-wise, the 
+research work gives an insight into the real-world implementation of AI agentic 
+systems and natural language interfaces in smart factory settings and can be 
+used in the future of Industry 4.0 intelligent manufacturing systems. 
+ 
+1.8 Summary  
+In this chapter, the background, problem statement, purpose, objectives, 
+research questions, scope, and significance of the Engineering Management 
+AI Agentic System (eMAS) were presented. The chapter explained that 
+modern manufacturing environments are becoming more complex and require 
+systems that can provide faster access to operational data, better scheduling 
+support, and more flexible decision-making. Traditional engineering 
+management systems often depend on manual navigation, repeated data 
+
+
+--- PAGE 19 ---
+ 
+7 
+ 
+checking, and separate tools, which can increase workload and delay 
+decision-making. 
+ 
+This research focuses on eMAS as an AI-assisted manufacturing 
+management prototype that combines a frontend interface, backend 
+operational API, database, and AI assistant service. The system is designed 
+to help users interact with factory information through both normal interface 
+pages and natural-language requests. The scope includes functions such as 
+job scheduling, production data access, reports, dashboard visualization, 
+inventory and machine-resource queries, shortage analysis, and approval-
+controlled AI-assisted actions. The study does not aim to replace human 
+decision-makers or directly control factory machines. Instead, it investigates 
+how AI assistance can reduce manual interaction and support safer, more 
+informed engineering management decisions in a simulated manufacturing 
+environment. 
+Chapter 2 Literature Review  
+2.1 Introduction  
+The following section will emphasize examining current studies that are 
+relevant in the creation of the Engineering Management AI Agentic System 
+(eMAS). It aims at describing the key concepts, technologies, and systems 
+that assist in smart manufacturing and factory management. It also explains 
+Industry 4.0 concerned with the transformation of manufacturing that occurs 
+in the context of the traditional factories to the modern connected ones, 
+artificial intelligence and intelligent agents, and the tools that assist in data 
+analysis and making decisions. Through this analysis of the current literature, 
+the chapter indicates the weaknesses of current systems and how the eMAS 
+can enhance the scheduling and decision-making, as well as production 
+control. 
+ 
+
+
+--- PAGE 20 ---
+ 
+8 
+ 
+2.2 Industry 4.0 
+Industry 4.0 is reforming the operational patterns of the factories through the 
+employment of digital technologies, linked machines, and intelligent 
+automation. The previous factories were centralized and employed hand labor, 
+thus making the process slow and less adaptable. Smart factories, in their turn, 
+make decisions automatically using real-time data and interconnected 
+machines. This makes production quicker, more efficient, and more adaptable. 
+The study of Industry 4.0 will be significant to the development of eMAS since 
+these tools will generate the environment in which intelligent agents will be 
+able to assist in performing such duties as scheduling, monitoring, and 
+reporting. 
+ 
+2.2.1 Overview of Industry 4.0 
+Industry 4.0 transforms previous factories into more intelligent and 
+interconnected working places. Contrary to the conventional factories where 
+people worked by hand and decisions were made centrally, factories adopt 
+real-time information and machines that can make some decisions even 
+independently. This simplifies production, increases its flexibility, and can take 
+custom orders (Lu, 2017). 
+ 
+Using these technologies can really boost factory performance. For instance, 
+a study by Büchi et al. (2020) looked at 231 factories and found that both the 
+number of technologies a factory uses and how well they are connected affect 
+its success. Factories that fully embrace these technologies tend to see bigger 
+improvements. 
+ 
+Even smaller factories benefit. In Italy, firms that adopted several methods find 
+their labor productivity rise by about 7% measure against those that did not 
+(Bettiol et al., 2024). A review by Kim et al. (2023) also indicated that smart 
+manufacturing does not only make profit and cost reduction easier but also 
+helps in innovation, flexibility, and employee satisfaction. 
+
+
+--- PAGE 21 ---
+ 
+9 
+ 
+ 
+The change is driven by technologies like machines, sensors, and devices 
+linked via the Internet of Things, which share data instantly and make 
+monitoring and decision-making faster (Lu, 2017). Cyber-physical systems link 
+machines with computers, letting them sense, think, and act while working 
+together with other machines. Research by Oks et al. (2022) shows these 
+systems have many uses in smart factories. Cloud computing and cloud 
+manufacturing store and process machine data, helping factories plan better, 
+predict problems, and share information across locations (Shiyong Wang et 
+al., 2016). 
+ 
+2.2.2 Connectivity and Interoperability 
+In Industry 4.0, connectivity and interoperability are especially important 
+because they let machines, systems, and distinct parts of a factory share data 
+in real time. During interconnection, machines, sensors, and devices can 
+transmit and receive information amazingly fast. This assists the automation 
+to respond quicker, adjust production dynamically, and organize activities even 
+more effectively. 
+ 
+Real-time information is also important in control and decision-making. Here, 
+an example is cyber-physical system (CPS), which involves live sensor data 
+to identify issues and act upon them in real time (Oks et al., 2024). With this 
+connectivity, the smart factories are in a position to automate more than a 
+single machine. They can fully control the entire process of the entire factory.  
+ 
+Interoperability implies that various systems can be interoperable and 
+communicate with each other. Interoperability allows one machine or program 
+to access data in another machine or program without additional effort. This 
+prevents replication of information that is trapped in different data silos and 
+prevents repetition of work that has been done. A major issue with Industry 4.0 
+is that not all devices adhere to the same rule; thus, they will not necessarily 
+
+
+--- PAGE 22 ---
+ 
+10 
+ 
+be able to communicate with one another, and completing the interoperability 
+becomes difficult (Lu, 2017). 
+ 
+Conventional manufacturing systems are also challenged with this. Aging 
+machines also tend to have their own communication protocols, meaning they 
+are not easily integrated into the current systems. In the absence of standard 
+rules, it is hard to incorporate old machines into a real-time network. 
+ 
+Another challenge is managing real-time data. Collecting, sending, and 
+processing data from many sensors all at once can put a heavy load on 
+systems. Even CPS can struggle with fast data rates, network delays, and 
+keeping everything synchronized when real-time control is needed (Oks et al., 
+2024). 
+ 
+Achieving true interoperability requires more than technology. It also depends 
+on organization and shared standards. For example, a review by Acharya et 
+al. (2024) found that embedding digital twins within cyber-physical systems 
+needs multiple levels of interoperability, including technical, syntactic, 
+semantic, and organizational aspects. The study pointed out at least seventy-
+seven challenges, such as making sure systems understand the meaning of 
+shared data and aligning processes across departments. This shows why full 
+interoperability is complex and not easy to achieve. 
+ 
+2.2.3 Challenges in Modern Manufacturing 
+The current manufacturing industry is still challenged by the substantial 
+number of problems that change with the transition to Industry 4.0  as factories 
+shift to more advanced methods, the needs of the organization evolve, and 
+operation should be based on data. 
+ 
+
+
+--- PAGE 23 ---
+ 
+11 
+ 
+Navigating complexity and executive decision processes becomes more 
+challenging with the increase in the globalization of factories, manufacturers 
+are forced to deal with increased volumes of data, more sophisticated 
+machines, and improved inter-process coordination. This also brings in 
+additional levels of decision-making that the conventional systems did not 
+encounter. Studies show that handling systems successfully requires 
+structured decision-support tools because of the higher volume of data and 
+the need for more coordination (Fatorachian & Kazemi, 2018). 
+ 
+Big data projects and quality 4.0 are also challenging because its initiatives 
+aim to improve quality and prediction in manufacturing. But most such projects 
+do not generate long-term value. In a review, 80 to 87 percent of 
+manufacturing big-data undertakings fail to survive due to lack of clarity and 
+preparation in the organizations (Escobar et al., 2021). 
+ 
+Overseeing connectivity and infrastructure integration is also a problem 
+because connecting old machines with modern solutions continues as a 
+problem. Different private communication in old machines also results in 
+fragmentation of systems and interfaces that cannot be compatible. Several 
+types of hardware make it harder to connect everything together. These 
+interoperability problems complicate the work of the manufacturers to design 
+a seamless and high-performing digital system. As an example, Alqoud et al. 
+(2022) have found that when attaching IoT sensors and gateways to older 
+machines, there are serious problems with the different protocols, and there 
+are no standard communication rules that make integration even harder. 
+ 
+2.2.4 Concept of Intelligent Agents 
+Intelligent agents refer to computer code that is capable of detecting what is 
+occurring in its environment, reasoning about it, and performing a response. 
+This is commonly referred to as the perceive, reason, and act cycle 
+
+
+--- PAGE 24 ---
+ 
+12 
+ 
+(Wooldridge & Jennings, 1995). Other agents are reactive, i.e., they act now 
+they feel without thinking. Others are more complex, known as deliberative 
+agents, in the sense that they are able to anticipate actions to be taken in the 
+future according to the possibilities. 
+ 
+All these agents can be designed in diverse ways. The BDI model, which can 
+be defined as Belief, Desire, and Intention, is one of them. It assists an agent 
+to discern the world (beliefs), make decisions on what it desires to reach 
+(desires), and plan on what to do next (intentions) (Georgeff & Rao, 1995). 
+The other method is hybrid or layered architecture. In them, the agents are 
+structured in levels. The upper levels are involved in high-level decisions, and 
+the lower ones are involved with routine activities (Wooldridge and Jennings, 
+1995). 
+ 
+Intelligent agents come in handy in manufacturing and Industry 4.0. They are 
+able to track the machines, plan production, and identify issues as well as 
+collaborate with other agents. It was found that agent utilization can help make 
+factories quicker and more efficient, particularly when decisions are required 
+in a brief time and the conditions are constantly altered (Pulikottil et al., 2023). 
+ 
+2.2.4.1 BDI-Based Reasoning for Manufacturing Scheduling in Industry 
+4.0 
+Belief-Desire-Intention (BDI) model is a structured and systematic way of 
+reasoning that is suitable in manufacturing scheduling in the environment. 
+Beliefs in this context reflect the current perception of an agent of the machine 
+state of the factory, such as its machine availability, job status, order priority 
+and faults detected, constantly updated by cyber-physical systems and sensor 
+data. According to these beliefs, the agents develop desires that mirror 
+production goals like reducing job lateness, maximizing machine use and 
+urgency of orders. The agent then makes commitments that are the actions of 
+concrete scheduling, such as reassigning jobs, or changing a sequence of 
+production or rescheduling activities or tasks in response to disruptions in the 
+
+
+--- PAGE 25 ---
+ 
+13 
+ 
+operations. Recent research indicates that the BDI-based reasoning is a good 
+strategy to use in decision making in dynamic and uncertain situations. 
+Karaduman et al. (2026) demonstrate that improved agents of BDI like fuzzy-
+BDI architectures can adapt their reasoning in intelligent cyber-physical 
+systems through dealing with uncertainty of real-time data. Moreover, such 
+formal modelling and verification of BDI agents in a state of uncertainty also 
+increase their reliability and quality of correctness in the application of real-
+time industrial operations (Archibald et al., 2025) These results justify the use 
+of BDI-based agents as fundamental rationale in building systems that are 
+intelligent scheduling and management, like theai agentic Engineering 
+Management AI Agentic System (eMAS). 
+2.2.5 Multi-Agent Systems in Manufacturing 
+Multi-agent systems (MAS) refer to those systems in which multiple intelligent 
+agents are incorporated, which may act independently and operate collectively 
+in achieving common goals. Applications of MAS in manufacturing have been 
+witnessed to make distributed decisions, autonomous scheduling, and 
+automatic machine interaction. These systems can be effectively applied, 
+particularly in intelligent factories whereby the production processes must be 
+dynamic with fluctuations of demand or availability of machines or any other 
+dynamic factors.  
+ 
+Recent studies have solid evidence concerning the effectiveness of MAS. Li 
+et al. (2025) have developed a MAS that is built on deep reinforcement 
+learning (DRL) in self-organizing resource-based scheduling. This system was 
+much better than the old schedule regulations and was responsive to dynamic 
+changes and also was more efficient in production. Similarly, in a work on 
+decentralized MAS to schedule machine shops online, the agents found out 
+that they could learn how to place bids on work and decide when to initiate a 
+job, resulting in reductions of job tardiness of 25 percent compared to 
+traditional scheduling algorithms (Didden et al., 2023). 
+ 
+
+
+--- PAGE 26 ---
+ 
+14 
+ 
+MAS using multi-agent reinforcement learning (MARL) has shown itself to 
+assist in the process of incrementing online layout planning in the flex system 
+and scheduling during digital production planning and timetabling. The 
+strategy enabled assembly lines to be reconfigured within a brief time in 
+response to order type or demand variation to boost the flexibility of the entire 
+system (Kaven et al., 2024). The machines and robots are also assisted by 
+MAS in coordination. Making quality solutions with less computation time than 
+the centralized scheduling which improves efficiency of the operations, the 
+multi-agent approach to retrieving orders and robot task plans control in 
+robotic mobile fulfillment systems (RMFS) has given good solutions. (Teck et 
+al., 2023).  
+ 
+Overall, these findings indicate that MAS will be in a position to achieve such 
+goals as distributed decision-making, real-time responsiveness, flexibility, and 
+superior scheduling performance. Regarding systems like eMAS, autonomous 
+scheduling, better coordination, and a more responsive production process 
+can be achieved because of adopting MAS architecture. 
+2.2.6 Benefits and Challenges of MAS 
+A lot of advantages that the contemporary smart factories have compared to 
+MAS are numerous, but among the largest ones, there exists flexibility. It is 
+able to quickly adjust to any changes in the event of a machine failure or 
+sudden peak in demand. Studies have also shown that factory plants are more 
+able to handle complex and unforeseeable conditions using MARL 
+(Bahrpeyma & Reichelt, 2022). 
+MAS also facilitates autonomy, which allows for decentralized decision-
+making among agents: based on their knowledge, individual agents are able 
+to make decisions locally, without being supervised by an external central 
+control. For gaining insights, the partially decentralized scheduling in a self-
+organizing MAS was much more adaptive with respect to dynamic 
+disturbances (new order arrival; machine failure) than classical scheduling 
+approaches (Li et al., 2025). 
+
+
+--- PAGE 27 ---
+ 
+15 
+ 
+Another strength is scalability. With an increase in the number of factories, 
+machines, workstations, or production lines, MAS architecture enables the 
+addition of new agents without modifying the entire control system. A review 
+of studies on smart-manufacturing networks indicates that MAS has good 
+scaling capability for growing or reconfigurable production lines (Guo et al., 
+2023). 
+The protocol used for one stated implementation of MAS is another issue. 
+Existing MAS protocols differ greatly in terms of rules and guidelines, making 
+it very difficult to integrate them or standardize them. This was highlighted in 
+a recent review on agent-based manufacturing, where the lack of industry 
+standards and difficulties in incorporating MAS into older legacy systems 
+remain stubborn implementation barriers (Pulikottil et al., 2023). 
+Second, MAS is not widely implemented due to complexity and integration 
+overhead. A large capital investment is required to ensure proper integration 
+throughout the manufacturing process to support decentralized control. 
+Moreover, the lack of awareness and the need for experts to apply these 
+complicated systems still prevents their extensive use in industry (Pulikottil et 
+al., 2023). 
+Finally, stability and coordination can be an issue. While a few agents may 
+coordinate easily, conflicts or oscillations can occur when many agents are 
+involved unless they are strategically designed. Reviews have shown that 
+MAS encounters difficulty maintaining stable and consistent behaviour under 
+high concurrency of agents in manufacturing (Bahrpeyma & Reichelt, 2022). 
+ 
+2.3 Natural Language Processing and Decision Support Systems  
+Natural Language Processing (NLP) is playing an increasingly significant role 
+in modern smart factories. By enabling machines to understand and process 
+human language, NLP supports decision-making, simplifies operations, and 
+enhances human-machine interaction. NLP can be applied in several ways in 
+industrial settings, including chatbots, voice/text commands for machines, and 
+assisting decision-support systems. 
+
+
+--- PAGE 28 ---
+ 
+16 
+ 
+2.3.1 NLP for Industrial Applications  
+Getting familiar with factory terminology, ensuring that NLP performs fast in 
+noisy conditions, and integrating it with the existing systems require specific 
+planning, adaptation, and sufficient resources. Natural Language Processing 
+(NLP) is currently being used in intelligent factories to enhance human-
+machine communication, optimize workflows and aid decision making. 
+Chatbots are one of the applications, which serve as virtual assistants to 
+operators, maintenance personnel, or supervisors. These chatbots enable 
+employees to enquire about the state of the machine, troubleshooting process, 
+availability of spare parts, or the production schedule without references to the 
+manuals. Research indicates that NLP-based chatbots are capable of 
+decreasing human resources and shortening the reaction period in 
+multifaceted industrial settings (Yadav et al., 2025). 
+ 
+The other major use is that it provides the voice and text messages to 
+communicate with Machines robots. Leveraging large language models (LLMs) 
+and manufacturing agents, one can identify natural language instructions and 
+convert them to tasks. This promotes the performance and collaboration for 
+a multitude of agents which help optimize operations to be more dynamic.(Lim 
+et al., 2024). 
+ 
+NLP also has been used to support decision-support systems with 
+unstructured data, including maintenance records, inspection records, and 
+even communications with the supply-chain. NLP predicts failures, minimizes 
+schedules, and identifies patterns on the surface to increase the efficiency of 
+the entire factory, and promote the use of data in decision-making (Yu et al., 
+2026). 
+ 
+Lastly, incorporation of NLP with multi-agent systems enables the agents to 
+comprehend human directives, coordinate independently and dynamically 
+
+
+--- PAGE 29 ---
+ 
+17 
+ 
+adjust production lines. This integration also helps environments to be flexible 
+and provide responsiveness in real-time (Lim et al., 2024). 
+ 
+But then there are some inherent problems that arise from those benefits. For 
+instance, NLP systems require specific factory-related vocabulary training in 
+order to function well. They also have to be incorporated into existing 
+manufacturing systems, which can be challenging. Efficient and accurate NLP 
+in the high noise factory environments can only be achieved by 
+considerations of organized planning, need based handling, systematic 
+arrangements, and well-ordered processes (Yadav et al., 2025). 
+ 
+2.3.2 Data Visualization in Manufacturing Management 
+In contemporary production, data visualization is highly significant as it 
+transforms the complex data into easily accessible and effective information. 
+Dashboards, charts, and visual analytics can assist a manager and operators 
+to quickly grasp the status of production and the performance of machines and 
+the issues in the workflow. The trends, problems, and issues are easier to 
+identify with visualizations and, thus, one makes decisions faster and more 
+correctly. A recent survey conducted by Lindner et al. (2025) demonstrates 
+that the visualization in manufacturing influences the way individuals think and 
+decide and enhance the performance of production in general. 
+ 
+Dashboards frequently include real-time information of machines, sensors and 
+production lines in smart factories. Key performance indicators (KPIs) are 
+easy to monitor by operators including machine uptime, output, and defect 
+rates. The patterns across time can also be identified with the aid of visual 
+analytics that will aid in the maintenance planning, resource planning, and the 
+forecasting of production requirements. As an example, Garcia et al. (2024) 
+demonstrated that a visualization of time-series manufacturing data using 
+dashboards can enable maintenance teams to follow the operations more 
+efficiently. 
+
+
+--- PAGE 30 ---
+ 
+18 
+ 
+ 
+The visual interfaces should be clear and simple since factories generate a lot 
+of data that is complex. Inappropriately designed dashboards or congested 
+charts will introduce errors and delays in decision-making. On the contrary, 
+properly developed visualization systems taking into account the role of users, 
+real-time dynamics, and human factors can significantly enhance awareness 
+and reaction in intelligent factories (Lindner et al., 2025). 
+ 
+The interactive real-time visualization can be used to monitor daily and long-
+term planning. They enable teams to react rapidly to production issues, 
+organize maintenance ahead of time, utilize resources effectively, and adapt 
+to evolving production needs, and data is an important asset of smart 
+manufacturing. 
+ 
+2.3.3 AI-Based Decision Support Systems 
+AI based decision support systems (DSS) are becoming more common in 
+modern factories because they help managers make better and faster 
+decisions. Instead of showing only fixed charts or static dashboards, AI 
+systems can study data in real time and give suggestions based on machine 
+learning and prediction models. A recent study explains that AI based DSS can 
+support factories by improving planning, quality control, and machine 
+monitoring (Soori et al., 2024). 
+AI DSS can also help with predictive maintenance. The system checks sensor 
+data from machines and learns what normal behaviour looks like. When it sees 
+something unusual, it warns operators early so they can fix the issue before 
+the machine fails. This helps reduce downtime and improves reliability (Soori 
+et al., 2024). 
+Another use of AI DSS is in quality monitoring. Research shows that machine 
+learning can find small changes or errors in production that humans may miss. 
+By detecting defects early, factories can reduce waste and improve product 
+quality (Lin & Chen, 2024). 
+
+
+--- PAGE 31 ---
+ 
+19 
+ 
+AI DSS also supports production planning. Instead of using fixed rules, the 
+system studies the current demand, machine availability, and material supply. 
+It can then recommend better production schedules or adjustments to meet 
+new conditions. This makes the factory more flexible and able to react to 
+change (Soori et al., 2024). 
+Even with these benefits, AI DSS has some limits. It needs high quality data, 
+good sensors, and systems that can work together. It also requires skilled 
+workers who understand how to use AI recommendations safely. Without 
+these, the system may not perform well (Soori et al., 2026) 
+Overall, AI based DSS offer a clearer and more useful way to support 
+decisions in factories compared to traditional dashboards. They help workers 
+act earlier, understand problems faster, and run production more smoothly. 
+ 
+2.3.4 LLM-Based Agentic Systems and Tool Use 
+ 
+Recent developments in Large Language Models (LLMs) have expanded the 
+role of AI systems from simple text generation to agentic systems that can 
+reason, plan, and interact with external tools. LLM-based agents are designed 
+to receive user instructions, break down tasks, select suitable actions, and use 
+available resources to complete the task. Wang et al. (2024) explain that LLM-
+based autonomous agents normally include components such as planning, 
+memory, tool use, and action execution. This is important for eMAS because 
+the system does not only provide a chatbot response, but also connects 
+natural-language requests to backend manufacturing tools and operational 
+data. 
+ 
+Tool use is especially important in agentic AI systems. Instead of depending 
+only on the knowledge stored inside the model, the agent can call external 
+tools such as APIs, databases, search systems, calculators, or software 
+services. Qu et al. (2025) describe tool learning as a process where LLMs 
+
+
+--- PAGE 32 ---
+ 
+20 
+ 
+perform task planning, tool selection, tool calling, and response generation. 
+This allows an AI system to solve more practical tasks because it can use 
+external systems rather than only generating text from memory. 
+ 
+In the context of eMAS, tool use allows the Factory Agent to connect natural-
+language requests with backend factory-management functions. For example, 
+when a user asks about job schedules, machine status, inventory shortages, 
+or reports, the AI assistant can select the relevant backend tool, retrieve the 
+required information, and generate a response based on actual system data. 
+This makes the assistant more reliable than a normal chatbot because its 
+answers are grounded in operational data. Therefore, LLM-based agentic 
+systems and tool use provide a strong theoretical and technical foundation for 
+the current eMAS design. 
+ 
+2.3.5 Retrieval-Augmented Generation in Industrial Knowledge Support 
+Retrieval-Augmented Generation (RAG) is an approach that improves LLM 
+responses by retrieving relevant external information before generating an 
+answer. This is useful because LLMs may have outdated knowledge, may not 
+know private domain-specific information, or may generate unsupported 
+answers. Klesel & Wittmann (2025) explain that RAG can support information 
+access by combining conversational AI with external knowledge sources, 
+allowing users to retrieve more relevant information through natural-language 
+queries. 
+RAG is important in complex information environments because knowledge 
+may be stored across many documents, manuals, records, or databases. In 
+manufacturing, useful information may exist in maintenance procedures, 
+scheduling rules, safety documents, operation manuals, and internal reports. 
+A normal LLM may not have access to this information unless it is provided 
+during the interaction. RAG helps solve this problem by retrieving relevant 
+context from the available knowledge base before producing the final 
+response. 
+
+
+--- PAGE 33 ---
+ 
+21 
+ 
+For eMAS, RAG supports document-based advisory responses. When a user 
+asks a knowledge-related question, the AI assistant can retrieve relevant 
+information from available documents and use it to prepare a more grounded 
+answer. This is useful for factory-management tasks where users may need 
+explanations, rules, or references instead of only database values. RAG also 
+improves trust because the answer can be linked to retrieved knowledge 
+sources, allowing the user to verify the information. Therefore, RAG 
+strengthens eMAS as a decision-support system by connecting natural-
+language interaction with operational and document-based knowledge. 
+ 
+2.3.6  Human-in-the-Loop Approval for Safe AI Automation 
+Human-in-the-Loop (HITL) design refers to systems where humans remain 
+involved in important stages of AI decision-making or action execution. This is 
+especially important when AI systems are used in high-impact or operational 
+environments. Chen et al. (2023) explain that HITL combines human 
+intelligence and machine intelligence to support more ethical and controlled AI 
+systems. Instead of allowing AI to act fully on its own, HITL keeps human 
+judgment involved where accuracy, responsibility, or safety is important. 
+In manufacturing management, fully automated AI actions can create risk if 
+the system changes schedules, updates records, or applies operational 
+decisions without human review. Even if the AI assistant can identify a useful 
+action, the final decision should still be checked by a responsible user when 
+the action affects business data. This is because manufacturing records are 
+connected to production planning, inventory, machine allocation, and reporting. 
+A wrong change may affect other parts of the workflow. 
+For this reason, eMAS separates read-only AI assistance from business-
+changing actions. Read-only tasks, such as retrieving reports or checking 
+machine status, can be completed directly. However, actions that modify 
+operational records must go through human approval before execution. This 
+approval workflow improves traceability and helps prevent unintended 
+changes. It also supports user trust because the AI assistant becomes a 
+
+
+--- PAGE 34 ---
+ 
+22 
+ 
+controlled decision-support tool rather than an uncontrolled automation 
+system. Therefore, HITL approval is a critical part of the eMAS safety design. 
+ 
+2.3.7 API-Based Interoperability and Tool Registry 
+Interoperability is a major requirement in Industry 4.0 systems because 
+manufacturing data is often distributed across different software modules, 
+machines, databases, and services. Sun et al. (2020) explain that Industry 4.0 
+requires connected processes, systems, and people, and that factories must 
+combine 
+knowledge 
+from 
+different 
+technological 
+layers. 
+Without 
+interoperability, users may need to manually move between different systems 
+to collect the information needed for decision-making. 
+API-based interoperability provides a practical way to connect different 
+software components. Instead of directly coupling the AI assistant to each 
+internal database table or frontend page, the system can expose backend 
+functions through structured API endpoints. Carvajal-Flores et al. (2024) also 
+highlight the importance of semantic interoperability in industrial digitalisation, 
+especially for making industrial systems easier to connect and adopt. This is 
+relevant to eMAS because the backend API acts as the bridge between the 
+Factory Agent and the manufacturing data. 
+In eMAS, the Go backend provides API endpoints for jobs, machines, 
+inventory, reports, scheduling, production logs, and approvals. The Factory 
+Agent can use these backend tools to retrieve data or prepare controlled 
+actions. A tool registry helps the agent know which backend tools are available, 
+what each tool does, and what input is required. This makes the AI assistant 
+more modular and easier to extend because new backend functions can be 
+exposed as tools without redesigning the whole system. API-based 
+interoperability and tool registry design therefore support the current eMAS 
+architecture by connecting natural-language interaction with real operational 
+system functions. 
+ 
+
+
+--- PAGE 35 ---
+ 
+23 
+ 
+ 
+2.4 Comparison Study of eMAS and Existing Industrial Solutions 
+The following comparison is made between the proposed Engineering 
+Management AI Agentic System (eMAS) and current industrial tools that 
+commonly used in industry. The study is interested in features that 
+immediately influence usability, flexibility, and decision-making. The 
+comparison points out the areas where the eMAS can deliver feasible 
+advantages to small and medium factories. 
+ 
+2.4.1 Comparison Criteria 
+The comparison is based on criteria that fall within the scope and capabilities 
+of eMAS: AI help on daily operation, Presentation and Information Processing, 
+Flexibility & Adaptability, Ease of Adjustment, Connection Needs, and Setup 
+Time & Expense. 
+ 
+2.4.2 Systems Selected for Comparison 
+eMAS (Engineering Management AI Agentic System), Skyplanner APS and 
+Siemens Opcenter APS have been choose for this comparison study. eMAS 
+is an AI-based multi-agent system with natural language interaction, intelligent 
+thinking, data visualization, and automatic reporting, which will assist users in 
+managing the operational processes. SkyPlanner APS is a cloud-based 
+advanced planning and scheduling software that targets small and medium-
+sized manufacturers. It focusses on automation, visualization, and simplicity 
+of setup. Siemens Opcenter APS is made for large plants. It is easy to adjust, 
+able to integrate with ERP/MES, and gives a pleasant view of daily operations. 
+ 
+2.4.3 Comparative Analysis 
+The followings provide a comparison between the existing production planning 
+systems, namely SkyPlanner APS and Siemens Opcenter APS and the 
+
+
+--- PAGE 36 ---
+ 
+24 
+ 
+proposed eMAS system. The features of the system that are considered in the 
+analysis include user interface, setting system requirements, operational 
+flexibility and the AI capabilities. The comparison between these popular 
+platforms, the section demonstrates the special place of eMAS in the market, 
+particularly its easy accessibility, interaction in natural language, and ability to 
+support small and medium sized businesses. 
+ 
+2.4.3.1 SkyPlanner APS 
+SkyPlanner APS is a trending production planning software that targets 
+manufacturing firms. It is concerned with maximizing production schedules 
+with AI scheduler, minimizing delays, and boosting resources allocation. 
+SkyPlanner depends on manual organized data entry and needs to be 
+oversee by experienced planner.  
+ 
+In terms of user interface and ease of use, SkyPlanner has a graphical 
+interface in the form of a Gantt chart that can assist the user to see the 
+schedules and tasks at a glance. Tasks can be dropped, and timelines can be 
+adjusted immediately, as well as dependencies. In Figure 2.1 (SkyPlanner 
+APS - Production Scheduling with AI, 2024), the Gantt chart interface is 
+presented with the focus on visualizing tasks and managing the timeline. This 
+renders SkyPlanner user-friendly, though one has to train to know all the 
+capabilities. 
+ 
+ 
+Figure 2.1: Gantt chart view from SkyPlanner. 
+
+
+--- PAGE 37 ---
+ 
+25 
+ 
+ 
+In terms of system setup and data requirement, SkyPlanner needs structured 
+production information, i.e. availability of machines, priority of orders and 
+resource capacity. In contrast to eMAS which can be run on small or virtual 
+data, SkyPlanner requires veritable data inputs in order to do accurate 
+scheduling. Figure 2.2 (SkyPlanner APS - Production Scheduling with AI, 2024) 
+represents the data input panel in which users are to input production details. 
+The arrangement is medium level whereby each production line will require 
+some configuration. 
+ 
+ 
+Figure 2.2: SkyPlanner data input panel.  
+ 
+In terms of main strengths and flexibility, SkyPlanner APS is meant to assist in 
+visual production schedule and planning. The clarity of workflow and 
+resources allocation is among its key advantages as it enables the production 
+planners to track the tasks in different machines with ease. Figure 2.3 
+(SkyPlanner APS - Production Scheduling with AI, 2024) depicts the Global 
+Rules interface which includes such options as job mobility to the more 
+suitable workstations, monitoring the beginning and termination times of the 
+subcontracts, and the establishment of customer priorities. These regulations 
+
+
+--- PAGE 38 ---
+ 
+26 
+ 
+allow the planners to keep the resources allocation in check as they adjust to 
+the day-to-day changes in operations. 
+ 
+ 
+Figure 2.3: SkyPlanner Global Rules Overview 
+ 
+The other feature of the flexibility of SkyPlanner is configuring the periods to 
+schedule and the possibility to combine overlapping capacities as it is depicted 
+in Figure 2.4 (SkyPlanner APS - Production Scheduling with AI, 2024). 
+Planners have the ability to establish time windows, update lead times, and 
+highlight the jobs in accordance with priority or lateness. The visual and 
+interactive methodology will be flexible in media: users can make adjustments 
+in real-time, but the system will not suggest changes based on AI and will not 
+offer interaction relying on natural language as eMAS. 
+ 
+
+
+--- PAGE 39 ---
+ 
+27 
+ 
+ 
+Figure 2.4: SkyPlanner Scheduling Rule Settings 
+ 
+In terms of limitation, SkyPlanner has a relatively small AI capacity as well as 
+unstructured or simulated data, which is the primary limitation. More tricky 
+situations need to be adjusted by hand. 
+ 
+2.4.3.2 Siemens Opcenter APS 
+Siemens Opcenter APS (formerly Preactor) is a planning and scheduling 
+system operating at an industry level in large factories. It offers profound 
+connectivity with MES, ERP and machine level systems. Some of the powerful 
+features of Opcenter include shop-floor tracking in real time, sophisticated 
+analytics, and sophisticated rule-based planning. 
+ 
+In terms of user interface and ease of use, the interface of Opcenter APS is 
+an industrial-grade planning and monitoring interface. Figure 2.5 (ATS Lean 
+Scheduling International, 2024) indicates the central dashboard and multi-line 
+production status and alerts. Although potent, the interface is complicated and 
+needs knowledge of specialists as it becomes more difficult to utilize by small 
+factories or by common people. 
+ 
+
+
+--- PAGE 40 ---
+ 
+28 
+ 
+ 
+Figure 2.5: Siemens Opcenter dashboard. 
+ 
+In terms of system setup and data requirement, Opcenter needs complete 
+industrial data, such as ERP, MES, and machine data. The system 
+configuration panel presented in Figure 2.6 (ATS Lean Scheduling 
+International, 2024) demonstrates that combining different data sources is 
+quite difficult. The installation is cumbersome and time consuming though it 
+provides extensive integration in the large-scale manufacturing processes.  
+ 
+ 
+Figure 2.6: Opcenter system configuration panel. 
+ 
+
+
+--- PAGE 41 ---
+ 
+29 
+ 
+In terms of main strengths and flexibility, Opcenter is good in industrial level 
+integration, automation, and simulation. It can conduct high-level what-if 
+analysis, optimization of production and linking of various factories. The 
+simulation of machine scheduling and identification of a bottleneck is shown 
+in Figure 2.7 (ATS Lean Scheduling International, 2024). Its responsiveness 
+to ad-hoc queries, or lightweight production modifications, is lower than that of 
+eMAS, however. 
+ 
+ 
+Figure 2.7: Opcenter production simulation view. 
+ 
+In terms of limitation ,though Opcenter is immensely powerful, it is expensive 
+and complex. Its elevated level of automation is best suited to large industries 
+but is excessive when it comes to small scale or experimental systems such 
+as eMAS. 
+ 
+2.4.3.3 Summary of comparison 
+This part is an overview of the major distinctions between eMAS, SkyPlanner 
+APS and Siemens Opcenter APS. The comparison reveals how the systems 
+suit various user types and settings eMAS is aimed at being simple, interactive 
+with a natural language, and assisting users in comprehending factory data 
+with ease. SkyPlanner APS is more effective in formal planning of production 
+and visual scheduling. Siemens Opcenter APS is completely industrialized 
+with prominent level of automation but at a higher cost that comes with 
+complex installation. Table 2.1 presents the overall comparison. 
+
+
+--- PAGE 42 ---
+ 
+30 
+ 
+ 
+Table 2.1 Summary of comparison 
+Aspect 
+eMAS 
+SkyPlanner APS 
+Siemens Opcenter 
+APS 
+UI 
+Simple 
+Standard 
+Complex 
+AI 
+Agent-based 
+Optimization-based 
+Advanced analytics 
+& optimization 
+Visualization Auto charts 
+Dashboards, Gantt 
+Advanced, 
+setup 
+needed 
+Reporting 
+Auto 
+Manual 
+Complex 
+Flexibility 
+High 
+Moderate 
+High 
+Integration 
+Low 
+Medium 
+High 
+Learning 
+Easy 
+Moderate 
+Hard 
+Cost 
+Low 
+Medium 
+Very high 
+Best Fit 
+SMEs with AI 
+SMEs fast planning 
+Large factories 
+ 
+2.4.4 Conclusion 
+The comparative review indicates that eMAS, SkyPlanner APS and Siemens 
+Opcenter APS can address the needs of different operational requirements 
+and users in the Industry 4.0 manufacturing sector, eMAS is the most suitable 
+in SMEs, education and low-technical infrastructure settings. The ability to 
+handle light or simulated data provides it with a high degree of flexibility during 
+the first phases of adoption or early analysis.  
+ 
+In its turn, SkyPlanner APS offers effective visual scheduling through Gantt 
+charts and planned planning capabilities. Its best suits to smaller to medium 
+size manufacturers which require sound and data-based production planning 
+and are not interested in the full integration of industrial integration. 
+Nonetheless, as the formatted data is demanded, and the narrow AI is needed, 
+it is not very flexible to nonstructured questions or quick what-if queries. 
+
+
+--- PAGE 43 ---
+ 
+31 
+ 
+ 
+The most innovative and comprehensive solution that offers deep integration 
+with ERP/MES solutions, advanced planning algorithms, and automation on 
+the industrial level is Siemens Opcenter APS. It is too complex and costly 
+regarding the set up and cost and is more appropriate to large factories with 
+their IT and engineering departments.  
+ 
+Overall, the comparison demonstrates that SkyPlanner and Opcenter are 
+useful in the conventional production planning context, whereas eMAS 
+introduces a new dimension of availability and flexibility using the assistance 
+of AI and natural language processing. eMAS, thus, is the piece of the puzzle 
+that is lacking between SMEs who need smart decision support and do not 
+necessarily have the technical and financial means to install commercial APS 
+systems. 
+ 
+2.5 Research Gap 
+The literature review shows that Industry 4.0 technologies, multi-agent 
+systems, natural-language processing, and AI-based decision support 
+systems have each contributed to modern manufacturing management. 
+However, many existing systems address these areas separately. Advanced 
+planning and scheduling systems are strong in optimization and production 
+planning, but they often require structured input, technical knowledge, and 
+manual configuration. On the other hand, chatbot-based systems may 
+improve user interaction, but they are often limited to answering questions and 
+may not be deeply connected to operational factory data or safe workflow 
+execution. 
+ 
+This creates a gap between intelligent conversation and practical 
+manufacturing management. Factory users need systems that can not only 
+understand natural-language requests, but also retrieve accurate operational 
+
+
+--- PAGE 44 ---
+ 
+32 
+ 
+data, support scheduling and reporting tasks, explain recommendations, and 
+prevent unsafe automated changes. In many existing tools, natural-language 
+interaction, backend operational integration, approval control, and decision 
+support are not combined into one lightweight prototype. 
+ 
+This research addresses the gap by developing eMAS as an AI-assisted 
+engineering management prototype. eMAS connects a natural-language 
+Factory Agent with backend manufacturing APIs, simulated factory data, 
+scheduling and reporting functions, and approval-controlled actions. The 
+research therefore explores how an agentic system can support practical 
+manufacturing workflows while still keeping human users involved in important 
+business-changing decisions. 
+2.6 Summary  
+The chapter has provided an accurate perspective of the concepts and 
+technologies which are associated with the Engineering Management AI 
+Agentic System, or eMAS. Based on the review, it is evident that Industry 4.0 
+is making factories abandon old, manual, and centralized processes and 
+adopt smart factories, which utilize data and interconnected machines to be 
+more effective. But this change is not easy. The review demonstrates that 
+factories continue to have serious issues particularly in their attempt to 
+interrelate old machines with the new Cyber Physical Systems and in their 
+attempt to deal with real time information in their decision making.  
+ 
+To deal with such problems, the study indicated the benefit of Multi Agent 
+Systems and Natural Language Processing. Research indicates that Multi 
+Agent Systems have the potential of assisting decentralized and flexible 
+control within quick changing production lines. Simultaneously, Natural 
+Language Processing and AI based Decision Support Systems assist workers 
+because they make the systems simpler to understand, more intuitive, and 
+quicker to grasp. 
+
+
+--- PAGE 45 ---
+ 
+33 
+ 
+ 
+Another significant gap in the market was also demonstrated during the 
+comparison of eMAS and such tools as SkyPlanner APS and Siemens 
+Opcenter APS which are used currently in industries. SkyPlanner is easy and 
+effective with small and medium businesses, whereas Siemens Opcenter 
+provides complete authority to giant industries. Nonetheless, the two systems 
+lack natural language interaction as well as do not offering flexibility of the kind 
+that eMAS wishes to offer. 
+Chapter 3 Theoretical Framework  
+3.1 Introduction  
+Chapter 3 presents the theoretical framework that supports the development 
+of the eMAS system. The current version of eMAS is not only a conventional 
+factory management system, but an integrated smart factory support platform 
+that combines manufacturing data management, decision support, automation, 
+and an AI-assisted interaction layer. Therefore, the theoretical foundation of 
+this project is based on smart manufacturing, cyber-physical production 
+systems, decision support systems, multi-agent system concepts, natural 
+language processing, retrieval-augmented generation, human-in-the-loop 
+control, and API-based interoperability. 
+ 
+These theories are used to explain how eMAS can represent factory 
+operations digitally, process operational data, support decision-making, and 
+allow users to interact with factory information through an AI assistant. In the 
+system, factory data such as jobs, machines, schedules, inventory, production 
+logs, shortages, and reports forms the operational knowledge base. The 
+Factory Agent then acts as an intelligent support layer that can understand 
+user requests, retrieve relevant information, select suitable backend tools, and 
+provide responses or recommendations. For actions that may modify business 
+data, the system uses an approval workflow to ensure that automation 
+remains controlled and safe. 
+
+
+--- PAGE 46 ---
+ 
+34 
+ 
+ 
+This chapter therefore connects the research theories with the actual design 
+direction of eMAS. It shows how the proposed system applies theoretical 
+concepts in a practical manufacturing-management environment. 
+ 
+3.2 Artificial Intelligence Agent Theory and the BDI Model 
+AI Agent Theory defines an agent as an autonomous entity capable of 
+perceiving its environment, reasoning about its current state, and performing 
+actions to achieve defined goals (Russell, Stuart & Norvig, 2021). Unlike 
+traditional software systems that rely on fixed and predefined procedures, 
+intelligent agents operate autonomously and are able to adapt their behavior 
+in response to environmental changes. In this research, the agents within the 
+Engineering Management AI Agentic System (eMAS) are designed based on 
+the Belief–Desire–Intention (BDI) model, which provides a structured cognitive 
+framework for agent reasoning. Within this model, beliefs represent the 
+agent’s understanding of the factory environment, including machine status, 
+production schedules, resource availability, and detected disruptions, while 
+desires define the operational objectives the agent seeks to achieve, such as 
+minimizing production delays, reducing operational errors, and improving 
+workflow efficiency. Intentions correspond to the specific actions selected by 
+the agent, including rescheduling tasks, generating alerts, or executing 
+automated operations. By applying the BDI model, eMAS agents are able to 
+dynamically revise their intentions when new information updates their beliefs, 
+enabling adaptive and context-aware behavior. This theoretical application 
+directly supports the research objective of evaluating whether AI agents can 
+reduce daily operational errors and accelerate engineering management tasks. 
+ 
+3.3 Natural Language Processing as the Human–Agent Interface 
+Natural Language Processing (NLP) is the main human-agent interface on 
+eMAS where people can talk with the system in their own words instead of 
+
+
+--- PAGE 47 ---
+ 
+35 
+ 
+command language. Theoretically, NLP is the process by which the human 
+intention is converted to the agent comprehendible representations such that 
+it can be used to affect reasoning and decision-making. 
+ 
+This translation is once more conceptualized as a multistage process in eMAS. 
+The intent recognition is first performed to detect the communicative intention 
+of the user, e.g. to demand system status, to start rescheduling or to demand 
+performance measures. Second, relevant entities and parameters in the 
+command, 
+including 
+machine 
+identifiers, 
+production 
+timeframes 
+or 
+performance indicators are identified with information extraction and slot filling 
+techniques. Considering the case of requesting current production delays on 
+Line A, it can be broken down into intent (status query) and slots (production 
+delays, Line A). 
+ 
+The output of this NLP pipe is structured and then, the result is fed into the 
+belief revision mechanism of BDI model. Particularly, extracted intents and 
+parameters are mapped to symbolic or structured beliefs change, altering the 
+internal agent state description of the factory state. This theoretical connection 
+can be linked with the theory of BDI agents, where belief changes cause the 
+thinking processes that can update desires and create new intentions. 
+ 
+The current developments in large language models (LLMs) also contribute to 
+this paradigm of interaction by providing semantic parsing and context-
+sensitive interpretation of user input, and more flexible and robust mapping 
+between natural language expressions and the belief structures of agents. 
+Instead of acting like a black box, NLP in eMAS is then theorized to be an 
+intermediating layer that operationalizes human cognitive intent to formal 
+representations that can be used in agent reasoning. 
+ 
+
+
+--- PAGE 48 ---
+ 
+36 
+ 
+The explicit definition of the given NLP-to-belief translation process facilitates 
+the scope of the current research that aims to determine whether natural 
+language interaction can enhance system usability and the effectiveness of 
+decision-making in smart factory settings. 
+ 
+3.4 Cyber-Physical Systems (CPS) and Smart Factory Context 
+This study based mainly on the Cyber-Physical Systems (CPS) theory and 
+interoperability theory. CPS theory describes how physical processes and 
+computational intelligence are brought together using constant feedback so 
+that the systems can watch, understand and adjust their behavior in real time 
+even when in a complex environment. 
+ 
+The factory is designed as a system of physical-digital interaction where the 
+physical layer is the set of machines, sensors, and other resources involved 
+in production, and intelligent agents are the participants of the cyber layer. 
+Physical environmental changes are felt and measured in the form of digital 
+state updates and create a closed interaction between physical and 
+computational space. 
+ 
+The interoperability theory is a complement of CPS theory, as it explains how 
+the heterogeneous systems and agents can exchange information in a 
+consistent and meaningful manner. Instead of specialized protocols or 
+implementations, interoperability theory puts emphasis on common 
+information models, semantic alignment, and standardized interfaces as a 
+requirement to coordinate reasoning between distributed systems. This is the 
+theoretical perspective that underlies the supposition that the agents are able 
+to have a consistent and updated model of the factory state with heterogeneity 
+in the system. The process is equivalent to CPS theory, which is an adaptive 
+control loop of sensing, computation, and action. 
+ 
+
+
+--- PAGE 49 ---
+ 
+37 
+ 
+Instead of descriptive standards, this section establishes the grounds of on 
+the foundations of CPS and interoperability theory and gives a theoretical 
+account of how the smart factory environment enables adaptive and agent-
+driven reasoning. This theoretical framework underpins the legitimacy of the 
+application of concepts as a component of the eMAS structure and justifies 
+the assessment of the system responsiveness and flexibility in the changing 
+manufacturing conditions. 
+ 
+3.5 Multi-Agent System Concepts and Agent Coordination 
+The Multi-Agent System (MAS) theory involves research into the systems that 
+consist of multiple autonomous agents interacting and coordinating to resolve 
+problems that are challenging or inefficient to solve by centralized control. 
+MAS theory is especially applicable in manufacturing situations because 
+production resources are distributed, production processes are parallel, and 
+local disruptions are frequent. 
+ 
+The agents in eMAS are designed with specific functions, including monitoring 
+agent, scheduling agent and decision-support agent, whose functions are 
+based on the BDI cognitive model. Although in autonomy, all the agents 
+respond to local events independently, it is the system-level effectiveness that 
+requires coordination mechanisms. 
+ 
+Negotiation-based coordination models, including the Contract Net Protocol 
+(CNP), are theoretically based on the coordination of agents in eMAS. In this 
+context, an agent that perceives a disturbance (e.g., a machine failure) may 
+take the role of a manager agent and post a task announcement to other 
+agents. Resource agents or scheduling agents can then consider their local 
+beliefs and abilities and make bids. Depending on preset standards, including 
+a low delay or minimal resource use, the manager agent chooses the most 
+appropriate proposal and allocates the task. 
+
+
+--- PAGE 50 ---
+ 
+38 
+ 
+ 
+This coordination theory makes sure that the interaction between agents is not 
+by chance but it is guided by clear interaction regulations balancing the local 
+autonomy against global optimization. The idea that eMAS is better suited to 
+dynamic conditions of production as compared to the traditional centralized or 
+rule-based manufacturing management systems is reinforced by application 
+of MAS coordination theory. 
+ 
+3.6 Decision Support System (DSS) Theory 
+The concept of the Decision Support System (DSS) is directed at information 
+systems oriented at supporting human decision-makers with the help of the 
+provision of relevant information, analysis tools, and recommendations. There 
+are three broad categories of DSS namely passive, active and cooperative 
+systems. Passive DSS are those which simply present data without giving 
+direct recommendations whereas active DSS are those which automatically 
+give suggestions or decisions based on the analysis of the system. 
+ 
+In this categorization, eMAS is theoretically placed as an Active Decision 
+Support System. Instead of showing dashboards or historical reports, eMAS 
+agents also constantly examine real-time factory information, make judgments 
+about the present and future system states, and makes suggestions in 
+advance, including rescheduling operations, priority changes, or operational 
+warnings. 
+ 
+It is the embedding of AI agent reasoning in the DSS framework which means 
+that the engineering managers do not have to carry the cognitive load of 
+routine analysis and exception handling because it is entrusted to autonomous 
+agents. Human users are also in the loop of decision-making but are facilitated 
+with timely and contextual insights on the system. 
+ 
+
+
+--- PAGE 51 ---
+ 
+39 
+ 
+This section explicitly presents eMAS as an Active DSS, which allows 
+distinguishing between the traditional manufacturing information system and 
+offers a clearer theoretical framework on how to assess the increase in the 
+level of decision accuracy, planning speed, and managerial efficiency. 
+ 
+3.7 Integrated Theoretical Framework of eMAS 
+The integrated theoretical framework of eMAS combines AI agent theory, the 
+Belief-Desire-Intention (BDI) model, Natural Language Processing (NLP), 
+Decision Support System (DSS) theory, and smart manufacturing concepts. 
+These theories are not applied as separate ideas, but as connected 
+foundations that guide the design of the system. AI agent theory supports the 
+idea that the system should be able to interpret a user request, reason about 
+available information, and select suitable actions. The BDI model is used as a 
+conceptual explanation of this reasoning process, where beliefs represent the 
+current factory data, desires represent operational goals, and intentions 
+represent selected actions or recommendations. 
+ 
+NLP provides the human-agent interface by allowing users to express factory-
+management requests in natural language. These requests are transformed 
+into structured tasks that can be handled by the Factory Agent. DSS theory 
+supports the role of eMAS as a system that assists human decision-makers 
+by presenting relevant information, recommendations, and explanations. 
+Smart manufacturing and Industry 4.0 concepts provide the operational 
+context, where production data, scheduling, inventory, machines, and reports 
+must be connected to support timely decisions. 
+ 
+In the implemented prototype, these theories are represented through a 
+layered architecture. The frontend allows user interaction, the backend API 
+provides access to structured factory data, the database stores operational 
+records, and the Factory Agent performs natural-language interpretation, tool 
+
+
+--- PAGE 52 ---
+ 
+40 
+ 
+selection, information retrieval, and response preparation. For business-
+changing actions, human approval is required before execution. This 
+integrated framework ensures that eMAS remains both intelligent and 
+controlled, supporting automation while preserving human oversight. 
+ 
+Figure 3.1: eMAS theorical framework. 
+ 
+3.7.1 Mapping 
+of 
+Theoretical 
+Concepts 
+to 
+Current 
+eMAS 
+Implementation 
+The relationship between the theoretical framework and the current eMAS 
+implementation is shown in Table 3.1. This mapping is important because it 
+demonstrates how the system design is not only based on general theory but 
+is also reflected in the actual modules and functions developed in the project. 
+Table 3.1 Mapping of Theoretical Concepts to eMAS 
+
+
+--- PAGE 53 ---
+ 
+41 
+ 
+Theoretical 
+Concept 
+Application 
+in 
+Current 
+eMAS System 
+Purpose in the System 
+Smart 
+Manufacturing 
+Digital modules for jobs, 
+machines, 
+inventory, 
+schedules, production logs, 
+reports, and dashboards 
+Represents 
+factory 
+operations in a structured 
+digital environment 
+Cyber-Physical 
+Production 
+System 
+Simulated factory records 
+for machines, job steps, 
+production data, shortage 
+cases, 
+and 
+operational 
+status 
+Provides 
+a 
+digital 
+representation 
+of 
+real 
+manufacturing activities 
+Decision Support 
+System 
+Dashboard KPIs, predictive 
+analysis, 
+shortage 
+resolution, 
+scheduling 
+support, 
+and 
+report 
+generation 
+Helps 
+users 
+analyse 
+factory 
+conditions 
+and 
+make better decisions 
+Multi-Agent 
+System Concept 
+Cooperation 
+between 
+frontend, 
+backend 
+API, 
+Factory Agent, database, 
+RAG knowledge layer, and 
+approval workflow 
+Allows different system 
+components 
+to 
+work 
+together toward factory-
+management tasks 
+BDI Model 
+Beliefs 
+from 
+data 
+and 
+context, desires from task 
+objectives, intentions from 
+selected tool actions 
+Explains how the Factory 
+Agent 
+selects 
+actions 
+based 
+on 
+available 
+information 
+and 
+user 
+goals 
+Natural 
+Language 
+Processing 
+AI assistant interface for 
+interpreting user questions 
+and 
+factory-management 
+requests 
+Allows users to access 
+system functions using 
+natural language 
+
+
+--- PAGE 54 ---
+ 
+42 
+ 
+LLM-Based Tool 
+Use 
+Factory 
+Agent 
+selects 
+backend tools generated 
+from system APIs 
+Enables the AI assistant 
+to query system data and 
+support operational tasks 
+Retrieval-
+Augmented 
+Generation 
+Retrieval of relevant project 
+or factory knowledge before 
+generating responses 
+Improves 
+answer 
+grounding and reduces 
+unsupported responses 
+Human-in-the-
+Loop Control 
+Approval 
+workflow 
+for 
+actions that may change 
+business data 
+Maintains 
+safety, 
+accountability, and user 
+control 
+API-Based 
+Interoperability 
+REST API and tool registry 
+connecting 
+the 
+Factory 
+Agent 
+with 
+backend 
+services 
+Allows AI functions to 
+interact 
+with 
+existing 
+system modules in a 
+controlled way 
+ 
+From this mapping, eMAS can be understood as an AI-assisted decision 
+support system for manufacturing management. The frontend provides user 
+access to operational modules, the backend manages structured factory data, 
+and the Factory Agent provides an intelligent layer for natural-language 
+interaction and task support. The theoretical framework therefore supports 
+both the management-system functions and the AI assistant functions of the 
+project. 
+ 
+ 
+3.8 Summary 
+This chapter formed the theoretical framework that will inform the design and 
+assessment of eMAS and has incorporated AI Agent Theory, BDI model, NLP, 
+MAS, and DSS theory. The framework does not consider these concepts 
+separately, but in the way in which they have connections with one another 
+and how they all influence system behavior and architecture. This theoretical 
+
+
+--- PAGE 55 ---
+ 
+43 
+ 
+foundation offers a good rationale of the design of eMAS and establishes the 
+foundation of the methodology and analysis that are given in the following 
+chapters. 
+ 
+Chapter 4 Research Methodology  
+4.1 Introduction  
+This chapter describes the research methodology used to develop and 
+evaluate the Engineering Management AI Agentic System (eMAS). Since the 
+project has progressed from an interim prototype into a working full-stack 
+system, the methodology focuses on both system development and system 
+evaluation. The evaluation is designed to measure whether eMAS can support 
+manufacturing management tasks, reduce manual work, provide useful 
+decision support, and maintain safe AI-assisted operations. 
+ 
+The current eMAS system consists of a React-based frontend, a Go backend 
+API, a MySQL database, and a Python FastAPI Factory Agent service. The 
+system includes manufacturing modules such as job management, machine 
+and resource management, inventory, products and BOM, scheduling, 
+shortage resolution, production data, reports, dashboards, and an AI assistant. 
+Therefore, the research methodology must evaluate not only the usability of 
+the interface, but also the correctness, reliability, safety, and integration of 
+these system components. 
+ 
+Due to limited access to a live industrial factory and confidential manufacturing 
+data, the evaluation is conducted using seeded manufacturing data, simulated 
+factory scenarios, automated tests, system logs, API responses, Factory 
+Agent traces, and limited proxy-user testing where available. This approach 
+allows eMAS to be evaluated in a controlled and repeatable environment while 
+still reflecting realistic factory-management workflows. 
+
+
+--- PAGE 56 ---
+ 
+44 
+ 
+4.2 Research Design 
+This study applies a design and development research approach because the 
+main objective is to build and evaluate a functional AI-assisted manufacturing 
+management system. The research does not only study existing theory, but 
+applies concepts from smart manufacturing, decision support systems, multi-
+agent systems, natural language processing, retrieval-augmented generation, 
+and human-in-the-loop approval into a working prototype. 
+ 
+The research design combines scenario-based evaluation, automated system 
+testing, and limited user-oriented evaluation. Scenario-based evaluation is 
+used to test how eMAS handles representative factory-management situations 
+such as generating schedules, identifying material shortages, applying 
+shortage resolution, retrieving production data, generating reports, and using 
+the AI assistant to answer factory-related questions. Automated testing is used 
+to verify backend APIs, frontend behavior, Factory Agent workflows, data 
+integrity, approval control, and end-to-end user workflows. User-oriented 
+evaluation is used where possible to observe task completion time, interaction 
+count, and feedback from proxy users. 
+ 
+This mixed evaluation design is suitable because eMAS is an integrated 
+system. A simple survey alone is not enough to prove that the system works 
+correctly. The system must also be tested through actual workflows that 
+involve the frontend, backend API, database, AI assistant, and approval 
+process. Therefore, the evaluation focuses on evidence generated from the 
+working system itself, supported by usability observations and proxy-user 
+feedback where available. 
+ 
+4.3 System Development Methodology 
+The development of eMAS follows a clear process that begins with 
+understanding what the system must achieve and ends with building a working 
+
+
+--- PAGE 57 ---
+ 
+45 
+ 
+prototype that can be tested in a factory environment. This approach ensures 
+that every part of the system, including the AI agents, NLP commands, multi-
+agent logic, and decision support features, is created based on real factory 
+needs and supported by the theories explained in the previous chapter. The 
+methodology also makes sure that the final system is practical, reliable, and 
+suitable for daily use. To give an overall picture of this process, a diagram such 
+as Figure 4.1 can be used to show how the stages connect. 
+ 
+ 
+Figure 4.1: System Development Life Cycle (SDLC) Overview Diagram 
+ 
+This diagram shows the key steps in the creation of eMAS which begin with 
+the gathering of system requirements, system architecture designing, 
+development of the prototype, testing, and refinements of the system, and 
+lastly the performance testing. It gives a clear picture of the relationship 
+between every step and makes sure that the system fulfills not only the needs 
+of the users but also the technical goals. 
+ 
+The completed implementation also produces testable system artifacts. These 
+include backend API endpoints, frontend pages, Factory Agent workflows, 
+seeded manufacturing data, automated tests, and end-to-end test scenarios. 
+These artifacts become the main basis for the evaluation described in the 
+following sections. 
+ 
+4.3.1 Requirements Collection 
+The first step in building eMAS is collecting the requirements that guide the 
+system design. This involves learning how users currently work, what 
+problems they face, and which tasks can be improved with automation or AI 
+
+
+--- PAGE 58 ---
+ 
+46 
+ 
+support. The use of proxy users instead of active factory operators as ways of 
+eliciting the requirements of eMAS is caused by the inability to have access to 
+a live industrial factory environment. These proxy individuals include 
+engineering students and academic personnel who have been previously 
+exposed to manufacturing systems, production planning or industrial 
+processes. They are used in its simulation of the behavior, expectations, and 
+interaction patterns of factory operators in the initial stages of system design. 
+With this method, functionality requirements, usability constraints, and 
+automation possibilities can be determined without having access to restricted 
+or closed industrial environments. 
+ 
+Besides the proxy user involvement, there is the expert consultation of the 
+requirements collection process. The validation of the identified requirements 
+is done by supervisors or people with experience in industrial engineering or 
+manufacturing system to make certain that the results correspond to the real-
+life work in the factory. Such a combination of literature based grounding, 
+simulating proxy user and expert feedback makes the requirements of the 
+system academically knowledgeable and operationally sensible in recognition 
+of the constraints of accessing the system. 
+ 
+The process of the requirements collection will start with the review of 
+available research and documentation since the literature review will present 
+the theoretical background and offer general problems that are prevalent in 
+factories and AI-driven systems. It is then followed by interviews with the 
+factory employees to get the actual experiences and the way the day-to-day 
+activities are conducted. Once this insight is obtained, a survey is conducted 
+to generate broader feedback among the users, particularly on the system 
+complexity, what they would like to be in the system and what they expect to 
+be automated. This order is to ensure that the system requirements are 
+founded on the academic findings as well as real user needs. Figure 4.2 shows 
+
+
+--- PAGE 59 ---
+ 
+47 
+ 
+how different sources of information contribute to the final system 
+requirements. 
+ 
+ 
+Figure 4.2: Requirements Gathering Process 
+ 
+ 
+4.3.2 System Architecture Design 
+After the system requirements were identified, the overall architecture of 
+eMAS was designed as a layered full-stack system. The architecture 
+separates the user interface, backend operational services, data storage, and 
+AI agent components so that each part of the system can be developed, tested, 
+and improved independently. This design allows eMAS to support normal 
+manufacturing management functions while also providing natural-language 
+AI assistance. 
+ 
+The frontend layer is developed using React and Vite. It provides the main 
+user interface for dashboards, job scheduling, production data, reports, 
+inventory, machine resources, shortage resolution, and the AI assistant. Users 
+can interact with the system either through normal menu-based pages or 
+through the AI assistant using natural-language requests. 
+ 
+The backend operational layer is implemented using Go with the Gin 
+framework. It provides REST API endpoints for core manufacturing functions 
+such as jobs, machines, inventory, production logs, quality records, reports, 
+scheduling, and approvals. The backend communicates with a MySQL 
+database, which stores structured factory data used by both the frontend and 
+
+
+--- PAGE 60 ---
+ 
+48 
+ 
+the AI assistant. This layer acts as the main source of operational truth for the 
+system. 
+ 
+The AI layer is implemented as a separate Python FastAPI Factory Agent 
+service. This service receives natural-language requests from the frontend 
+and processes them through an agent workflow. The Factory Agent identifies 
+the user’s intent, selects suitable backend tools, retrieves relevant operational 
+data, and prepares responses for the user. When the request requires 
+document-based knowledge, retrieval-augmented generation is used to 
+retrieve relevant information before generating an answer. 
+ 
+For safety, eMAS separates read-only actions from business-changing actions. 
+If the AI assistant needs to perform an action that may modify operational 
+records, the system prepares the action for human review before execution. 
+The user must approve the action before it is applied. Server-Sent Events are 
+used to send live progress updates from the Factory Agent back to the 
+frontend, allowing the user to follow the status of the AI workflow. 
+ 
+Overall, the architecture supports a modular and safe AI-assisted 
+manufacturing management system. The frontend handles interaction, the Go 
+backend manages factory operations and data, the database stores structured 
+records, and the Factory Agent provides natural-language decision support 
+and workflow automation. 
+ 
+ 
+
+
+--- PAGE 61 ---
+ 
+49 
+ 
+Figure 4.3: eMAS System Architecture Diagram 
+ 
+4.3.3 Development Stages 
+The development of eMAS was carried out in several stages. The first stage 
+focused on building the backend domain and API modules for core 
+manufacturing data, including jobs, machines, inventory, scheduling, 
+production logs, reports, and system settings. The second stage involved 
+developing the frontend pages and user interface components, including the 
+dashboard, scheduling page, reports page, production data page, storage and 
+inventory page, machine resources page, and AI assistant interface. The third 
+stage focused on integrating the Factory Agent so that natural-language 
+requests could be processed and connected to backend tools. The fourth 
+stage added AI-assisted workflows such as scheduling support, shortage 
+resolution, operational recommendations, and approval-controlled actions. 
+The final stage focused on testing and validation using automated tests, 
+simulated data, and representative operational scenarios to ensure that the 
+prototype behaves reliably. 
+ 
+ 
+Figure 4.4: Development Stages Diagram 
+4.3.4 Tools and Technologies 
+The eMAS prototype uses a modern full-stack technology set. The frontend is 
+developed using React, Vite, and Tailwind CSS to provide a responsive and 
+interactive user interface. The backend API is implemented in Go using the 
+Gin web framework and GORM for database interaction. MySQL is used as 
+the main database for structured manufacturing data. The AI assistant is 
+implemented as a Python FastAPI Factory Agent service that uses an agent 
+workflow to process natural-language requests, select backend tools, retrieve 
+information, and prepare responses. The system also uses retrieval-
+augmented generation for document-based advisory support where 
+
+
+--- PAGE 62 ---
+ 
+50 
+ 
+applicable. Docker Compose and Nginx are used to support local deployment 
+and service routing. Testing is supported through Go tests, frontend 
+component tests, and Playwright end-to-end tests. 
+ 
+Figure 4.5: Technology Stack Diagram 
+ 
+4.4 Evaluation Framework 
+The evaluation framework measures how well eMAS achieves its research 
+objectives in functionality, usability, automation, decision support, safety, and 
+reliability. Since 
+eMAS is an integrated AI-assisted manufacturing 
+management system, the evaluation uses multiple sources of evidence rather 
+than relying only on user survey data. The main evidence sources include 
+simulated factory records, seeded operational scenarios, backend API 
+
+
+--- PAGE 63 ---
+ 
+51 
+ 
+responses, frontend interaction results, Factory Agent session traces, 
+automated test outputs, and end-to-end testing artifacts. 
+ 
+The evaluation is divided into six main areas. The first area is functionality, 
+which checks whether the main system modules operate according to their 
+intended purpose. The second area is scheduling and shortage resolution, 
+which evaluates whether the system can generate scheduling proposals, 
+detect material or subproduct shortages, and support apply-and-replan 
+workflows. The third area is AI-assisted interaction, which evaluates whether 
+the Factory Agent can understand user requests, select suitable tools, retrieve 
+relevant data, and provide grounded responses. The fourth area is usability, 
+which evaluates task completion time, interaction count, and user or proxy-
+user feedback. The fifth area is safety, which evaluates whether business-
+changing actions are protected by approval workflows. The sixth area is 
+reliability, which evaluates whether the system behaves consistently through 
+backend tests, frontend tests, Factory Agent tests, and Playwright end-to-end 
+tests. 
+ 
+This evaluation framework is designed to match the actual current eMAS 
+system. It avoids depending on large-scale real factory deployment, which is 
+outside the project limitation, and instead uses controlled system-based 
+evidence to demonstrate whether the prototype works effectively. 
+ 
+4.4.1 Functionality Evaluation  
+Functionality evaluation checks whether the main modules of eMAS are 
+implemented and usable. The evaluated modules include the dashboard, job 
+management, scheduling, shortage resolution, inventory, products and BOM, 
+machines and resources, production data, reports, settings, and the AI 
+assistant. Each module is evaluated by checking whether the user can access 
+
+
+--- PAGE 64 ---
+ 
+52 
+ 
+the function, retrieve the correct data, perform the intended task, and receive 
+a clear system response. 
+ 
+The evidence for functionality evaluation is collected from system screenshots, 
+frontend interaction records, backend API responses, and test results. For 
+example, the job management module can be evaluated by checking whether 
+job records are displayed correctly, while the inventory module can be 
+evaluated by checking whether material and product records match the 
+seeded database. This evaluation helps show that eMAS is not only a 
+conceptual design, but a working system with connected frontend and 
+backend functions. 
+ 
+4.4.2 Scheduling and Shortage Resolution Evaluation 
+Scheduling 
+and 
+shortage 
+resolution 
+are 
+evaluated 
+using 
+seeded 
+manufacturing scenarios. These scenarios include unscheduled jobs, 
+machine availability, production steps, material inventory, product inventory, 
+expected arrivals, BOM dependencies, and shortage conditions. The purpose 
+is to check whether eMAS can generate scheduling proposals and identify 
+operational constraints that may prevent jobs from being scheduled 
+successfully. 
+ 
+The scheduling evaluation records the number of generated proposals, 
+feasible proposals, infeasible proposals, blocked reasons, late jobs, and 
+scheduling warnings. The shortage-resolution evaluation records the 
+generated material shortage rows, planned product rows, affected jobs, 
+suggested quantities, arrival times, and apply-and-replan results. This is 
+important because the shortage-resolution feature is one of the strongest 
+current functions of eMAS. It shows that the system can detect factory 
+constraints and provide structured actions for resolving them. 
+ 
+
+
+--- PAGE 65 ---
+ 
+53 
+ 
+End-to-end testing is also used to validate this workflow. The Playwright 
+shortage-resolution tests check whether material rows are included by default, 
+planned product rows remain opt-in, selected rows are sent correctly to the 
+backend, and the system can continue to replan after shortage resolution. This 
+provides stronger evidence than manual observation alone because it verifies 
+the complete workflow from the user interface to backend services. 
+ 
+4.4.3 Factory Agent and AI-Assisted Interaction Evaluation  
+The Factory Agent is evaluated by testing how well it supports natural-
+language interaction with the manufacturing system. The evaluation focuses 
+on whether the assistant can understand user requests, identify the correct 
+intent, select suitable backend tools, retrieve relevant operational data, and 
+present useful responses to the user. The evaluated tasks include querying 
+job status, checking inventory or machine information, summarizing 
+production data, supporting scheduling-related questions, retrieving reports, 
+and preparing actions that require approval. 
+ 
+The AI assistant is not evaluated only by whether its response sounds natural. 
+It is evaluated by whether the response is grounded in system data. For this 
+reason, Factory Agent session traces, tool calls, API responses, and response 
+documents are used as evidence. These traces show whether the assistant 
+selected the correct tool, received the correct data, and generated a response 
+based on that data. For document-based answers, retrieval-augmented 
+generation is evaluated by checking whether relevant sources are retrieved 
+and used. 
+ 
+A small prompt evaluation set can also be used. In this evaluation, selected 
+factory-management prompts are prepared and the expected system behavior 
+is recorded. Each AI response is then classified as correct, partially correct, or 
+
+
+--- PAGE 66 ---
+ 
+54 
+ 
+incorrect based on tool selection, data correctness, and usefulness of the final 
+answer. 
+ 
+4.4.4 Safety and Approval Workflow Evaluation  
+Safety is evaluated through the human-in-the-loop approval workflow. In 
+eMAS, read-only actions such as retrieving job information, checking machine 
+status, or viewing reports can be completed directly. However, actions that 
+may modify business data must be reviewed and approved before execution. 
+This design reduces the risk of unintended changes caused by AI-assisted 
+automation. 
+ 
+The safety evaluation checks whether the system correctly separates read-
+only actions from business-changing actions. It also checks whether approval 
+cards are displayed when required, whether the user can approve or cancel 
+the action, and whether the backend only applies the change after approval. 
+Evidence is collected from approval workflow tests, frontend approval behavior, 
+Factory Agent session traces, and backend transaction tests. 
+ 
+This evaluation is important because eMAS uses AI to support factory 
+operations. Without approval control, AI automation may create safety and 
+accountability risks. The approval workflow ensures that the user remains 
+responsible for final business decisions while still benefiting from AI assistance. 
+ 
+4.4.5 Reliability and End-to-End Testing Evaluation 
+Reliability is evaluated using automated tests across different parts of the 
+system. The backend is tested using Go tests that verify API behavior, 
+scheduling logic, inventory handling, reports, transactions, approval behavior, 
+and shortage analysis. The frontend is tested using component tests to check 
+interface behavior, data rendering, response document display, approval 
+
+
+--- PAGE 67 ---
+ 
+55 
+ 
+cards, and shortage-resolution controls. The Factory Agent is tested using 
+Python tests that check tool selection, planning behavior, RAG retrieval, 
+session handling, approval resume, response document contracts, and graph 
+workflow behavior. 
+ 
+Playwright end-to-end tests are used to evaluate complete user-facing 
+workflows. These tests are especially important because eMAS is a multi-
+service system. A feature may pass backend or frontend tests individually but 
+still fail when the frontend, backend, database, and Factory Agent are used 
+together. The E2E tests validate workflows such as AI assistant chat, server-
+sent event streaming, scheduling, shortage resolution, approval workflow, 
+data integrity, resilience, and normal-use scenarios. 
+ 
+The result of automated testing is used as evidence of system reliability. The 
+number of executed tests, pass/fail result, and selected test artifacts can be 
+reported in Chapter 5. This allows the final report to support reliability claims 
+with repeatable technical evidence instead of relying only on user opinion. 
+ 
+4.4.6 Usability and Proxy-User Evaluation 
+Usability is evaluated using selected factory-management tasks. These tasks 
+may include checking job information, viewing schedules, finding inventory 
+status, reviewing shortage recommendations, generating reports, and asking 
+the AI assistant for operational information. For each task, the evaluation 
+records whether the user completed the task successfully, the time required, 
+the number of interactions, and any difficulty observed. 
+ 
+Since access to real factory operators is limited, proxy users may be used for 
+usability evaluation. Proxy users can include students or individuals with basic 
+understanding of engineering, production, or information systems. Their 
+feedback does not fully represent professional factory operators, but it can still 
+
+
+--- PAGE 68 ---
+ 
+56 
+ 
+provide useful information about system navigation, clarity, and perceived 
+usefulness. To avoid overstating the result, the findings from proxy users are 
+treated as preliminary usability feedback rather than full industrial validation. 
+ 
+If only a small number of proxy users is available, the analysis will focus on 
+descriptive results instead of strong statistical claims. This includes task 
+completion time, success rate, interaction count, and repeated feedback 
+themes. 
+ 
+4.5 Data Collection Methods 
+The evaluation data is collected from both system-generated sources and 
+user-oriented sources. The main system-generated sources include the 
+seeded manufacturing database, backend API responses, frontend interaction 
+results, Factory Agent session traces, system logs, automated test outputs, 
+and Playwright end-to-end test artifacts. 
+ 
+The seeded manufacturing database is used because access to live industrial 
+data is limited. The dataset includes representative factory-management 
+records such as jobs, machines, materials, products, BOM data, inventory 
+records, production logs, reports, schedules, shortages, and expected arrivals. 
+These records provide a controlled environment for testing system behavior 
+and comparing outputs against known data. 
+ 
+Backend API responses are collected to verify whether the system retrieves, 
+processes, and returns operational data correctly. Frontend interaction 
+records and screenshots are collected to show how users interact with the 
+system and whether the interface displays correct information. Factory Agent 
+session traces are collected to evaluate intent recognition, tool selection, data 
+retrieval, approval workflow, and response generation. 
+
+
+--- PAGE 69 ---
+ 
+57 
+ 
+ 
+Automated test outputs are collected from Go backend tests, frontend 
+component tests, Factory Agent tests, and Playwright E2E tests. These results 
+are used to support claims about reliability, integration, and correctness. If 
+proxy-user testing is conducted, task completion time, interaction count, task 
+success, and feedback comments are also collected. 
+ 
+4.6 Data Analysis Techniques  
+The collected data will be analyzed using both quantitative and qualitative 
+techniques. Quantitative analysis will be used to measure system 
+performance, task efficiency, automation benefits, and reliability. The main 
+quantitative measures include task completion time, number of user 
+interactions, response time, successful task completion rate, scheduling 
+correctness, report or query accuracy, approval workflow completion, and 
+automated test pass rate. Descriptive statistics such as mean, minimum, 
+maximum, standard deviation, and percentage improvement will be calculated 
+to summarize these results. 
+ 
+Where suitable, comparative analysis will be performed between normal 
+menu-based workflows and AI-assisted workflows. For example, the number 
+of steps required to find a report or check scheduling information can be 
+compared with the number of steps required when using the AI assistant. If 
+enough user or proxy-user task data is collected, statistical tests such as 
+paired sample t-tests or non-parametric alternatives may be used to check 
+whether the observed differences are meaningful. However, if the sample size 
+is small, the analysis will focus more on descriptive comparison and practical 
+improvement rather than strong statistical claims. 
+ 
+Qualitative analysis will be used to interpret user feedback, observations, and 
+comments about the system. The feedback will be grouped into themes such 
+
+
+--- PAGE 70 ---
+ 
+58 
+ 
+as ease of use, clarity of AI responses, trust in recommendations, usefulness 
+of approval control, and perceived workload reduction. Automated test results 
+and system traces will also be reviewed to identify common failure patterns, 
+reliability issues, and areas for improvement. By combining quantitative 
+metrics with qualitative interpretation, the analysis can provide a balanced 
+view of both technical performance and user experience. 
+ 
+4.7 Reliability and Validity 
+Reliability is supported through repeatable evaluation procedures and 
+automated testing. The system is tested using seeded manufacturing 
+scenarios, backend API tests, frontend component tests, Factory Agent tests, 
+and Playwright end-to-end tests. These tests allow the same workflows to be 
+executed repeatedly and help confirm whether eMAS behaves consistently 
+under controlled conditions. 
+ 
+End-to-end testing improves reliability because it checks the full workflow 
+across multiple services. For example, shortage-resolution E2E tests verify 
+that the frontend displays material and planned product rows correctly, sends 
+selected rows to the backend, and continues with the replan workflow. AI 
+assistant E2E tests verify chat interaction, response streaming, session state, 
+and approval behavior. These tests help detect integration issues that may not 
+appear in isolated unit tests. 
+ 
+Validity is supported by aligning the evaluation measures with the research 
+objectives. Since eMAS aims to improve factory-management access, reduce 
+manual work, support operational decision-making, and maintain safe AI-
+assisted actions, the evaluation measures focus on task completion, 
+interaction count, scheduling and shortage outputs, AI response correctness, 
+approval traceability, and system test results. 
+ 
+
+
+--- PAGE 71 ---
+ 
+59 
+ 
+The study also acknowledges limitations. The evaluation is conducted using 
+simulated factory data instead of live factory data. Proxy users may not fully 
+represent professional factory operators. The AI assistant is evaluated using 
+selected prompts and scenarios rather than all possible natural-language 
+inputs. However, these limitations are reduced by using realistic seeded 
+manufacturing records, repeatable test scenarios, backend data comparison, 
+automated test evidence, and transparent reporting of evaluation results. 
+ 
+Chapter 5 Data Analysis and Result  
+5.1 Introduction 
+This chapter presents the data analysis and results obtained from the 
+evaluation of the eMAS system. The evaluation focuses on whether the 
+system can support factory-management activities such as job monitoring, 
+production scheduling, inventory tracking, material shortage detection, report 
+generation, AI-assisted decision support, and approval-based safety control. 
+Since the system was developed as a prototype and was not deployed in a 
+live factory environment, the evaluation used simulated manufacturing data, 
+seeded factory scenarios, automated test results, system logs, and end-to-
+end workflow evidence. This approach is suitable because it allows the system 
+to be tested under representative manufacturing conditions while avoiding the 
+confidentiality issues of using real industrial production data. 
+ 
+5.2 Overview of Evaluation Data  
+The evaluation used both simulated factory data and automated testing 
+evidence. The simulated dataset contained 26 root production jobs, 10 
+machines, 9 products and subproducts, 14 inventory materials, 9 expected 
+material arrivals, 4 product inventory records, 3 inventory reservation records, 
+27 process steps, and 26 input BOM relationships. These records were 
+generated from the canonical seed data used by the system. 
+
+
+--- PAGE 72 ---
+ 
+60 
+ 
+In addition to the simulated data, the evaluation used automated test results 
+from the backend, frontend, Factory Agent, and browser-based end-to-end 
+workflows. The current project contains 57 Go backend test files, 95 Factory 
+Agent pytest files, 16 frontend component/unit test files, and 33 Playwright 
+E2E specification files. Static counting also identified 225 Go test functions, 
+1071 Factory Agent pytest definitions, 197 frontend source test declarations, 
+and 188 Playwright test declarations. These figures show that the evaluation 
+is supported by a broad test base rather than only manual observation. 
+Table 5.1 summarises the evaluation data used in this study. 
+Table 5.1 Evaluation data overview 
+Data Category 
+Quantity 
+Root production jobs 
+26 
+Machines 
+10 
+Products and subproducts 
+9 
+Inventory materials 
+14 
+Expected material arrivals 
+9 
+Product inventory records 
+4 
+Inventory reservation records 
+3 
+Process steps 
+27 
+Input BOM relationships 
+26 
+Seed AI proposal 
+1 
+Seed pipeline manifest scenarios 
+124 
+Factory Agent generated API tools 
+138 
+Go backend test files 
+57 
+Factory Agent pytest files 
+95 
+
+
+--- PAGE 73 ---
+ 
+61 
+ 
+Frontend component/unit test files 
+16 
+Playwright E2E specification files 
+33 
+ 
+5.3 Simulated Factory Dataset Analysis  
+The simulated dataset was designed to represent common data objects in a 
+manufacturing environment. These include production jobs, machine 
+resources, products, bill of materials, material inventory, expected arrivals, 
+process steps, scheduling proposals, and production-related records. 
+The 26 seeded jobs represent different production demands across multiple 
+product types. The 10 machines represent different manufacturing resources 
+such as CNC machines, lathes, hydraulic presses, coating stations, assembly 
+stations, and quality-control stations. The 14 materials and 9 expected 
+material arrivals support inventory and shortage-resolution testing. The 26 
+BOM input relationships allow the system to evaluate both direct material 
+requirements and subproduct dependencies. 
+This dataset is sufficient to evaluate the main workflows of eMAS, including 
+job scheduling, machine allocation, inventory checking, BOM-based shortage 
+analysis, expected material arrival planning, and AI-assisted factory queries. 
+Although the dataset is simulated, it reflects realistic manufacturing 
+relationships and provides a controlled environment for repeatable evaluation. 
+ 
+5.4 Functional Module Results  
+The functional evaluation focused on whether the completed system modules 
+were able to support the factory-management tasks described in the project 
+objectives. The evaluated modules include the dashboard, job management, 
+scheduling, shortage resolution, inventory management, product and BOM 
+management, reports, predictive analysis, machine resources, and the AI 
+assistant. 
+Table 5.2 summarises the functional module results. 
+
+
+--- PAGE 74 ---
+ 
+62 
+ 
+Table 5.2 Functional Module Results 
+System Module 
+Expected Function 
+Result 
+Dashboard 
+Display factory KPI and operational 
+summary 
+Passed 
+Job management 
+Create, view, update, and monitor 
+production jobs 
+Passed 
+Scheduling 
+Generate and display job schedules 
+Passed 
+Shortage resolution 
+Detect material shortages and suggest 
+resolution rows 
+Passed 
+Inventory management 
+Display stock, material records, and 
+expected arrivals 
+Passed 
+Product 
+and 
+BOM 
+management 
+Manage 
+product 
+and 
+material 
+relationships 
+Passed 
+Reports 
+Generate factory-related reports 
+Passed 
+Predictive analysis 
+Display analysis and recommendation-
+related outputs 
+Passed 
+Machine resources 
+Display machine status and resource 
+information 
+Passed 
+AI assistant 
+Answer factory-related questions and 
+support workflows 
+Passed 
+ 
+The results show that eMAS has developed beyond a basic interface 
+prototype. The current system includes connected frontend pages, backend 
+APIs, seeded data, scheduling logic, shortage-resolution workflows, report 
+functions, and an AI assistant that can interact with factory data. 
+ 
+5.5 Scheduling and Shortage Resolution Results  
+Scheduling and shortage resolution are important parts of eMAS because they 
+directly support factory decision-making. The scheduling function evaluates 
+production jobs against machines, process steps, material requirements, 
+product dependencies, and expected arrival dates. When a shortage is 
+
+
+--- PAGE 75 ---
+ 
+63 
+ 
+detected, the system can generate shortage-resolution proposals to help the 
+user understand what materials or planned products are needed. 
+The scheduler was evaluated using seeded manufacturing scenarios. These 
+scenarios include canonical seed scheduling, true material shortage, delayed 
+material wait, child BOM shortage, no-shortage control, resource overload, 
+and one-shot shortage resolution. The scheduler correctness gates check that 
+there are no machine overlaps, invalid time ranges, missing slots, duplicate 
+slots, step-order violations, unexplained infeasible jobs, or material shortages 
+without evidence. 
+Table 5.3 summarises the scheduling and shortage-resolution results. 
+Table 5.3 Scheduling and Shortage Resolution Results 
+Scenario 
+Expected Behaviour 
+Result 
+Canonical 
+seed schedule 
+Jobs should not contain overlap, invalid 
+time ranges, missing slots, duplicate 
+slots, or step-order violations 
+Passed 
+True 
+material 
+shortage 
+System should identify shortage only 
+when supported by shortage evidence 
+Passed 
+Delayed 
+material wait 
+Jobs with later material arrival should 
+wait instead of being falsely marked 
+infeasible 
+Passed 
+Child 
+BOM 
+shortage 
+Parent product shortage should trace to 
+material or subproduct evidence 
+Passed 
+No-shortage 
+control 
+System should avoid false shortage 
+rows 
+Passed 
+Resource 
+overload 
+Resource pressure should not be 
+misclassified as material shortage 
+Passed 
+One-shot 
+shortage 
+resolution 
+Applying recommended material rows 
+and rerunning should reduce or remove 
+material infeasibility 
+Passed 
+
+
+--- PAGE 76 ---
+ 
+64 
+ 
+Proposal 
+overlap 
+validation 
+Proposed schedule should not contain 
+machine overlap 
+Passed: 
+89 
+proposal slots, 0 
+overlaps 
+ 
+The Phase 6 overlap verification also supports the scheduling result. The 
+recorded verification found 26 jobs and 26 proposal IDs. Proposal validation 
+returned 89 total proposal slots and 0 overlaps. This indicates that the 
+generated scheduling proposals did not contain machine allocation conflicts 
+in the tested seeded proposal set. 
+ 
+5.6 Factory Agent and AI Assistant Results 
+The Factory Agent is one of the main improvements in the final eMAS system. 
+It allows users to interact with factory data using natural language instead of 
+relying only on manual navigation. The agent can interpret user requests, 
+select suitable tools, retrieve relevant data, generate responses, and request 
+approval for actions that may change business data. 
+The Factory Agent was evaluated through automated graph, tool-routing, API 
+alignment, benchmark, and browser workflow tests. The final Factory Agent 
+Python test suite recorded 1319 passed tests, 6 skipped tests, and 0 failed 
+tests. The Factory Agent node benchmark suite recorded 87 passed tests with 
+0 failed tests. In addition, the frontend/backend oracle contract tests recorded 
+185 passed tests with 0 failed tests, supporting alignment between the AI 
+assistant, backend API contracts, and frontend response behaviour. 
+Table 5.4 summarises the Factory Agent results. 
+Table 5.4 Factory Agent and AI Assistant Results 
+Test Area 
+Evidence 
+Result 
+Full Factory Agent pytest 
+Factory Agent Python 
+test suite 
+1319 
+passed, 
+6 
+skipped, 0 failed 
+
+
+--- PAGE 77 ---
+ 
+65 
+ 
+Factory 
+Agent 
+node 
+benchmark 
+Planner-owned 
+node 
+benchmark suite 
+87 passed, 0 failed 
+Frontend/backend oracle 
+contract 
+API and UI alignment 
+checks 
+185 passed, 0 failed 
+Backend tool metadata 
+alignment 
+Generated 
+tools 
+from 
+Swagger 
+138 tools generated 
+Seeded oracle workflow 
+Playwright seeded full-
+stack oracle suite 
+48 passed, 0 failed 
+ 
+These results show that the Factory Agent was not evaluated only by manual 
+observation. It was tested through graph-level, API-level, and browser-level 
+evidence. This supports the project objective of providing AI-assisted factory 
+decision support. 
+ 
+5.7 Safety and Approval Workflow Results 
+Safety is important because an AI assistant in a factory-management system 
+should not freely modify operational data without user confirmation. eMAS 
+addresses this through an approval workflow. When the Factory Agent 
+identifies an action that may change system data, the user must approve the 
+action before it is committed. 
+The approval workflow was evaluated through Factory Agent tests, frontend 
+component tests, seeded oracle tests, and release E2E tests. The tests 
+checked whether approval cards are displayed correctly, whether approval 
+decisions are handled safely, whether stale or repeated approvals are 
+prevented, and whether the system avoids fake success messages when an 
+operation fails. 
+Table 5.5 summarises the safety and approval workflow results. 
+Table 5.5 Safety and Approval Workflow Results 
+
+
+--- PAGE 78 ---
+ 
+66 
+ 
+Safety Scenario 
+Expected Result 
+Result 
+Read-only request 
+Agent can respond without approval 
+Passed 
+Data-changing action Agent requests approval before applying 
+change 
+Passed 
+Approval accepted 
+System applies the approved action 
+Passed 
+Approval rejected 
+System does not apply the rejected action Passed 
+Stale approval 
+System prevents unsafe repeated or 
+outdated approval 
+Passed 
+Failed operation 
+System avoids fake success message 
+Passed 
+Release 
+approval 
+workflow 
+Approval works in release E2E workflow 
+Passed 
+ 
+The approval mechanism improves the trustworthiness of eMAS by keeping 
+the user in control of important operational decisions. This is important 
+because the system is designed to assist factory managers and operators, not 
+replace human responsibility. 
+ 
+5.8 Reliability and Automated Testing Results  
+Automated testing provides the strongest technical reliability evidence for the 
+final eMAS system. The final verification was conducted across multiple layers, 
+including frontend unit and component tests, mocked browser-based E2E 
+tests, response-document E2E tests, seeded full-stack oracle tests, Factory 
+Agent Python tests, Factory Agent node benchmark tests, Go backend tests, 
+and frontend/backend oracle contract tests. 
+The current frontend unit and component test suite recorded 197 passed tests 
+with 0 failed tests. The mocked Playwright E2E suite recorded 62 passed tests 
+with 0 failed tests. The response-document E2E suite recorded 35 passed 
+tests with 0 failed tests, while the seeded full-stack oracle E2E suite recorded 
+48 passed tests with 0 failed tests. The Factory Agent Python test suite 
+recorded 1319 passed tests, 6 skipped tests, and 0 failed tests. The Factory 
+Agent node benchmark suite recorded 87 passed tests with 0 failed tests. The 
+
+
+--- PAGE 79 ---
+ 
+67 
+ 
+frontend/backend oracle contract suite recorded 185 passed tests with 0 failed 
+tests. The Go backend test suite also completed successfully across the 
+tested backend packages. 
+Table 5.6 summarises the automated testing evidence. 
+Table 5.6 Final Automated Testing Evidence by Verification Gate 
+Test Category 
+Final Recorded Result 
+Pass 
+Result 
+Frontend unit/component tests 
+197 passed, 0 failed 
+Passed 
+Mocked Playwright E2E tests 
+62 passed, 0 failed 
+Passed 
+Response-document E2E tests 
+35 passed, 0 failed 
+Passed 
+Seeded full-stack oracle E2E 
+tests 
+48 passed, 0 failed 
+Passed 
+Factory Agent Python tests 
+1319 passed, 6 skipped, 0 
+failed 
+Passed 
+Factory Agent node benchmark 
+tests 
+87 passed, 0 failed 
+Passed 
+Go backend tests 
+All 
+tested 
+packages 
+passed 
+Passed 
+Frontend/backend 
+oracle 
+contract tests 
+185 passed, 0 failed 
+Passed 
+ 
+Across the non-overlapping final test groups, 1713 counted tests passed with 
+0 failed tests. This count includes the frontend unit/component suite, mocked 
+Playwright E2E suite, seeded full-stack oracle E2E suite, Factory Agent 
+Python suite, and Factory Agent node benchmark suite. Additional targeted 
+verification gates also passed, including 35 response-document E2E tests and 
+185 frontend/backend oracle contract tests, but these are reported separately 
+because they overlap with the broader mocked E2E and Factory Agent Python 
+
+
+--- PAGE 80 ---
+ 
+68 
+ 
+test suites. The 6 skipped Factory Agent tests were not treated as failures 
+because they were intentionally excluded by the current test configuration. 
+The 100% pass result refers to the executed final verification gates. It does 
+not mean that every possible future factory scenario has been tested. However, 
+it shows that the current implementation passed the selected component-level, 
+service-level, agent-level, API-contract, benchmark, and full-stack workflow 
+checks. This provides strong technical evidence that eMAS is reliable at the 
+prototype evaluation stage. 
+ 
+5.9 End-to-End Workflow Results 
+End-to-end testing was included because eMAS depends on multiple services 
+working together. A typical workflow may involve the frontend, backend API, 
+database, Factory Agent, response-document renderer, approval workflow, 
+scheduling logic, and server-sent event updates. Therefore, E2E testing 
+provides stronger evidence than testing isolated modules only. 
+The current E2E evidence includes mocked Playwright workflows, response-
+document workflows, and seeded full-stack oracle workflows. The mocked 
+E2E suite recorded 62 passed tests with 0 failed tests. These tests covered 
+chat workflows, SSE handling, response-document display, prompt workflow 
+regression, normal-use hardening, and final response quality. The response-
+document E2E suite recorded 35 passed tests with 0 failed tests, covering 
+approval display, final response quality, source evidence display, event storm 
+handling, and diagnostic response handling. The seeded full-stack oracle E2E 
+suite recorded 48 passed tests with 0 failed tests, covering data integrity, 
+prompt regression, hard-query oracle cases, approval safety, SSE ordering, 
+and failure recovery. 
+Table 5.7 summarises the E2E workflow results. 
+Table 5.7 End-to-End Workflow Results 
+E2E Workflow 
+Test Evidence 
+Result 
+
+
+--- PAGE 81 ---
+ 
+69 
+ 
+Mocked frontend workflows 
+Playwright mocked E2E 
+suite 
+62 passed, 0 
+failed 
+Response-document and final-
+answer rendering 
+Playwright 
+response-
+document E2E suite 
+35 passed, 0 
+failed 
+Seeded 
+data-integrity 
+and 
+prompt-regression workflows 
+Playwright seeded full-
+stack oracle suite 
+48 passed, 0 
+failed 
+Final E2E gate executions 
+Final 
+E2E 
+gate 
+executions 
+145 passed, 
+0 failed 
+ 
+These results support the claim that eMAS works as an integrated system, not 
+only as separate technical modules. The seeded full-stack oracle tests are 
+especially important because they verify realistic manufacturing-related 
+workflows using seeded operational data and backend-connected Factory 
+Agent behaviour. 
+ 
+5.10 User Survey and Usability Feedback Results 
+A small task-based usability survey was conducted to collect feedback on the 
+usability and usefulness of the eMAS system. The survey involved 10 
+participants and used a five-point Likert scale, where 1 represents Strongly 
+Disagree, 2 represents Disagree, 3 represents Neutral, 4 represents Agree, 
+and 5 represents Strongly Agree. The purpose of the survey was to evaluate 
+whether users could understand and use the main functions of the system, 
+including dashboard monitoring, job and inventory access, scheduling, 
+shortage resolution, AI-assisted interaction, and approval-based safety control. 
+Since eMAS was evaluated as a prototype and was not deployed in a live 
+factory environment, the survey was used as an early usability evaluation 
+rather than a large-scale industrial user study. The participants were asked to 
+review the system and rate statements related to navigation, clarity, 
+usefulness, automation support, decision support, and safety. The survey 
+
+
+--- PAGE 82 ---
+ 
+70 
+ 
+results are useful because they provide user-facing evidence in addition to the 
+automated testing evidence reported in the previous sections. 
+Table 5.8 shows the survey statements and average scores. 
+Table 5.8 Mean Score of User Survey Items 
+No. Survey Statement 
+Mean 
+Score 
+1 
+The system interface is easy to navigate. 
+5.00 
+2 
+The dashboard helps me understand the factory status. 
+4.70 
+3 
+Job and inventory information can be found easily. 
+4.40 
+4 
+The scheduling result is understandable. 
+4.60 
+5 
+The shortage-resolution result clearly explains the 
+material problem. 
+4.90 
+6 
+The AI assistant understands factory-related questions. 
+4.80 
+7 
+The AI assistant provides useful information for decision-
+making. 
+4.50 
+8 
+The approval workflow makes data-changing actions feel 
+safer. 
+4.50 
+9 
+The system can reduce manual checking work compared 
+with doing the task manually. 
+4.70 
+10 
+Overall, the system is useful for factory-management 
+support. 
+5.00 
+ 
+
+
+--- PAGE 83 ---
+ 
+71 
+ 
+ 
+Figure 5.1 Mean Score of User Survey Items 
+The bar chart in Figure 5.1 shows that all survey items received high mean 
+scores above 4.00. The highest mean scores were recorded for interface 
+navigation and overall usefulness, both at 5.00. Shortage-resolution clarity 
+also scored highly at 4.90, followed by AI assistant understanding at 4.80. The 
+lowest score was job and inventory access at 4.40, although it still indicates a 
+positive user response. 
+The overall mean score across all survey items was 4.71 out of 5.00. This 
+indicates that the participants generally agreed or strongly agreed that eMAS 
+is usable and useful for factory-management support. Out of 100 total ratings 
+collected across all survey questions, 99 ratings were either Agree or Strongly 
+Agree, giving an overall positive response rate of 99%. 
+Table 5.9 summarises the response distribution for each survey item. 
+ 
+Table 5.9 Response Distribution of User Survey Items 
+Survey Statement Strongly 
+Agree 
+Agree Neutral Disagree 
+or 
+Positive 
+Response 
+Rate 
+
+
+--- PAGE 84 ---
+ 
+72 
+ 
+Strongly 
+Disagree 
+The 
+system 
+interface is easy to 
+navigate. 
+10 
+0 
+0 
+0 
+100% 
+The 
+dashboard 
+helps 
+me 
+understand 
+the 
+factory status. 
+7 
+3 
+0 
+0 
+100% 
+Job and inventory 
+information can be 
+found easily. 
+5 
+4 
+1 
+0 
+90% 
+The 
+scheduling 
+result 
+is 
+understandable. 
+6 
+4 
+0 
+0 
+100% 
+The 
+shortage-
+resolution 
+result 
+clearly explains the 
+material problem. 
+9 
+1 
+0 
+0 
+100% 
+The AI assistant 
+understands 
+factory-related 
+questions. 
+8 
+2 
+0 
+0 
+100% 
+The AI assistant 
+provides 
+useful 
+information 
+for 
+decision-making. 
+5 
+5 
+0 
+0 
+100% 
+The 
+approval 
+workflow 
+makes 
+data-changing 
+actions feel safer. 
+5 
+5 
+0 
+0 
+100% 
+
+
+--- PAGE 85 ---
+ 
+73 
+ 
+The system can 
+reduce 
+manual 
+checking 
+work 
+compared 
+with 
+doing 
+the 
+task 
+manually. 
+7 
+3 
+0 
+0 
+100% 
+Overall, the system 
+is 
+useful 
+for 
+factory-
+management 
+support. 
+10 
+0 
+0 
+0 
+100% 
+ 
+  
+Figure 5.2 Positive Response Rate of User Survey Items 
+ 
+The bar chart in Figure 5.2 shows that 9 out of 10 survey items achieved a 
+100% positive response rate, while job and inventory access achieved 90%. 
+This indicates that participants generally agreed or strongly agreed that eMAS 
+is usable and useful for factory-management support. 
+The strongest results were recorded for interface navigation and overall 
+usefulness, both with a mean score of 5.00. This suggests that participants 
+found the system easy to use and considered it useful for factory-management 
+support. The shortage-resolution result also received a high mean score of 
+4.90, showing that participants generally understood the material problem 
+explanations provided by the system. The AI assistant also received a strong 
+score of 4.80 for understanding factory-related questions, which supports the 
+system objective of providing AI-assisted interaction. 
+
+
+--- PAGE 86 ---
+ 
+74 
+ 
+The lowest mean score was 4.40 for finding job and inventory information 
+easily. Although this is still a positive result, it suggests that job and inventory 
+navigation can be improved further. For example, future improvements may 
+include clearer search filters, stronger cross-linking between job and inventory 
+pages, and more direct links from shortage rows to related material or job 
+records. 
+Overall, the survey results support the automated evaluation findings. The 
+participants responded positively to the usability, usefulness, AI assistance, 
+shortage explanation, and approval safety of eMAS. However, the survey was 
+limited to a small prototype evaluation and did not involve deployment in an 
+actual factory environment. Therefore, future work should conduct a larger 
+usability study with real factory users after the system is connected to live 
+operational data. 
+ 
+The survey questionnaire and anonymized raw response matrix are provided 
+in Appendix D to support the survey results reported in this section. 
+ 
+Chapter 6 Discussion 
+6.1 Introduction 
+This chapter discusses the findings presented in Chapter 5 and explains how 
+the results relate to the objectives of the eMAS project. The discussion focuses 
+on the effectiveness of the system as an AI-assisted manufacturing 
+management prototype, especially in the areas of factory data integration, 
+scheduling, shortage resolution, AI-assisted interaction, approval-based 
+safety, automated testing, and usability. 
+ 
+The results show that eMAS has developed into a working prototype with 
+multiple connected modules rather than a simple standalone dashboard. The 
+system supports factory-management workflows through frontend pages, 
+
+
+--- PAGE 87 ---
+ 
+75 
+ 
+backend APIs, simulated manufacturing data, Factory Agent interaction, 
+scheduling logic, shortage-resolution support, and automated testing. 
+However, since the system was evaluated using simulated data and proxy-
+user feedback, the findings should be interpreted as prototype evaluation 
+results rather than full industrial deployment results. 
+ 
+The findings also answer the research questions and support the project 
+objectives. For RQ1, the results show that an integrated AI-assisted 
+manufacturing management system can be developed by combining frontend 
+modules, backend APIs, a structured database, and a Factory Agent service. 
+For RQ2, the scheduling, shortage-resolution, and Factory Agent results show 
+that eMAS can support decision-making by identifying production constraints, 
+explaining material shortages, and retrieving relevant factory information. For 
+RQ3, the automated testing results and user survey show that the system is 
+reliable and usable at the prototype stage, with the executed final verification 
+gates recording 0 failed tests and the survey achieving an overall mean score 
+of 4.71 out of 5.00. Therefore, the evaluation results support the claim that 
+eMAS has achieved its main research objectives within a simulated 
+manufacturing environment. 
+ 
+6.2 Discussion of System Functionality 
+The functional results show that eMAS is able to support the main factory-
+management areas required by the project. These include dashboard 
+monitoring, job management, inventory tracking, product and BOM 
+management, scheduling, shortage resolution, reports, predictive analysis, 
+machine resources, and AI-assisted interaction. 
+ 
+A key strength of the system is that the modules are connected through shared 
+operational data. For example, job records are linked to products, products 
+are linked to BOM requirements, BOM requirements are linked to materials, 
+
+
+--- PAGE 88 ---
+ 
+76 
+ 
+and materials are linked to inventory and expected arrivals. This allows the 
+system to support more meaningful manufacturing workflows compared with 
+a system that only stores records separately. 
+ 
+The simulated dataset also helped demonstrate that eMAS can represent a 
+realistic factory-management environment. The dataset included 26 root jobs, 
+10 machines, 9 products and subproducts, 14 materials, 9 expected arrivals, 
+and 26 input BOM relationships. These data relationships allow the system to 
+test scheduling, shortage detection, inventory checking, and production 
+planning in a controlled way. 
+ 
+However, the system is still limited by the use of simulated data. Although the 
+dataset is representative, it does not fully capture the uncertainty and 
+complexity of a real factory environment, such as unexpected machine 
+breakdowns, supplier delays, operator constraints, urgent customer changes, 
+and incomplete production records. 
+ 
+6.3 Discussion of Scheduling and Shortage Resolution 
+The scheduling and shortage-resolution results are one of the most important 
+parts of the project because they show how eMAS supports decision-making 
+instead of only displaying data. The scheduling function evaluates jobs against 
+machines, process steps, material requirements, BOM dependencies, and 
+expected arrival dates. The shortage-resolution function helps users 
+understand what materials or planned products are needed to resolve 
+production constraints. 
+ 
+The evaluation showed that the system can handle important scheduling 
+correctness checks, including machine overlap validation, invalid time range 
+prevention, missing slot detection, duplicate slot prevention, step-order 
+validation, and material-shortage evidence checking. The recorded proposal 
+
+
+--- PAGE 89 ---
+ 
+77 
+ 
+overlap verification showed 89 proposal slots with 0 overlaps, which supports 
+the reliability of the scheduling output in the tested seeded scenario. 
+ 
+The shortage-resolution workflow is also useful because it provides a clearer 
+explanation of material problems. Instead of only showing that a job is 
+infeasible, the system can show shortage rows and affected jobs. This 
+improves transparency and helps users understand what action is required. 
+The survey result also supports this finding, as shortage-resolution clarity 
+received a high mean score of 4.90 out of 5.00. 
+ 
+However, shortage resolution must remain explainable. If too many jobs are 
+marked infeasible without clear root-cause evidence, users may lose 
+confidence in the system. Therefore, the system should continue to improve 
+how it separates true material shortages, delayed material availability, 
+resource overload, and subproduct dependency issues. 
+ 
+6.4 Discussion of Factory Agent and AI-Assisted Interaction 
+The Factory Agent improves eMAS by allowing users to interact with factory 
+data using natural language. This is useful because factory-management 
+systems often require users to search through many pages manually. With the 
+AI assistant, users can ask questions about jobs, inventory, shortages, 
+schedules, reports, and factory status. 
+The evaluation results show that the Factory Agent is supported by strong 
+automated testing. The Factory Agent Python test suite recorded 1319 passed 
+tests with 0 failed tests, while the Factory Agent node benchmark suite 
+recorded 87 passed tests with 0 failed tests. The frontend/backend oracle 
+contract suite also recorded 185 passed tests with 0 failed tests. The system 
+generated 138 API tools from the backend Swagger definition, which supports 
+alignment between the AI assistant and backend API functions. 
+
+
+--- PAGE 90 ---
+ 
+78 
+ 
+The survey result also supports the usefulness of the AI assistant. The 
+statement “The AI assistant understands factory-related questions” achieved 
+a mean score of 4.80, while “The AI assistant provides useful information for 
+decision-making” achieved a mean score of 4.50. This indicates that 
+participants generally found the AI assistant useful. 
+However, the AI assistant should not be treated as fully autonomous. Its role 
+is to assist users by retrieving data, explaining results, and supporting 
+decisions. Important operational actions should still require human approval, 
+especially when changing schedules, jobs, or business records. 
+ 
+6.5 Discussion of Safety and Approval Control 
+The approval workflow is an important safety feature in eMAS. Since the 
+system includes an AI assistant that can support action-based workflows, it is 
+necessary to prevent uncontrolled changes to operational data. The approval 
+mechanism ensures that data-changing actions are reviewed by the user 
+before being applied. 
+ 
+The evaluation showed that approval-related workflows passed through 
+automated tests and E2E verification. The survey also showed positive 
+feedback, with the approval workflow safety statement receiving a mean score 
+of 4.50. This suggests that users felt safer when the system required approval 
+before data-changing actions. 
+ 
+This design is suitable for manufacturing management because incorrect 
+schedule changes, job updates, or inventory actions may affect production 
+planning. By keeping the human user in control, eMAS supports AI-assisted 
+decision-making without removing user responsibility. 
+
+
+--- PAGE 91 ---
+ 
+79 
+ 
+6.6 Discussion of Reliability and Testing 
+The automated testing results provide strong evidence for system reliability. 
+Across the non-overlapping final test groups, 1713 counted tests passed with 
+0 failures. This includes 197 frontend unit/component tests, 62 mocked 
+Playwright E2E tests, 48 seeded full-stack oracle E2E tests, 1319 Factory 
+Agent Python tests, and 87 Factory Agent node benchmark tests. Additional 
+focused verification gates also passed, including 35 response-document E2E 
+tests and 185 frontend/backend oracle contract tests. These focused gates 
+are reported separately because they overlap with broader test suites.The 100% 
+pass rate is important because it shows that the executed final verification 
+gates passed successfully. However, this result should be interpreted correctly. 
+It means that the selected final test gates passed with 0 failures, not that every 
+possible future scenario or optional environment-dependent test has been 
+covered. 
+The use of E2E testing is especially valuable for this project because eMAS is 
+an integrated system. A complete workflow may involve the frontend, backend 
+API, database, Factory Agent, scheduling logic, server-sent event updates, 
+response-document rendering, and approval workflow. Therefore, E2E testing 
+provides stronger evidence than only testing individual functions separately. 
+ 
+6.7 Discussion of User Survey Results 
+The user survey results show positive early feedback on the usability and 
+usefulness of eMAS. The survey involved 10 participants and achieved an 
+overall mean score of 4.71 out of 5.00. Out of 100 total ratings, 99 ratings were 
+either Agree or Strongly Agree, giving an overall positive response rate of 99%. 
+ 
+The strongest results were interface navigation and overall usefulness, both 
+with mean scores of 5.00. This suggests that participants found the system 
+easy to navigate and useful for factory-management support. Shortage-
+
+
+--- PAGE 92 ---
+ 
+80 
+ 
+resolution clarity also received a high score of 4.90, which supports the 
+importance of explainable shortage results. 
+ 
+The lowest score was job and inventory access, with a mean score of 4.40. 
+Although this is still positive, it shows that job and inventory navigation can be 
+improved. Future improvements may include better filters, clearer linking 
+between jobs and materials, and faster access from shortage results to related 
+inventory records. 
+ 
+The survey supports the automated evaluation findings, but it also has 
+limitations. The sample size was small, and the participants were not actual 
+factory operators using live production data. Therefore, the survey should be 
+treated as early usability feedback rather than a complete industrial usability 
+study. 
+ 
+6.8 Limitations of the Current Evaluation 
+Although the evaluation results are positive, several limitations remain. First, 
+the system was evaluated using simulated factory data rather than live factory 
+data. This means that the system has not yet been tested against real 
+operational uncertainty, real supplier delays, real machine downtime, or real 
+production pressure. 
+ 
+Second, the survey involved only 10 participants. This is suitable for prototype 
+feedback, but it is not enough to represent all factory users. A larger study with 
+real factory managers, planners, operators, and inventory staff would provide 
+stronger usability evidence. 
+ 
+Third, the system has not yet been deployed in a real production environment. 
+Deployment would introduce additional concerns such as user roles, data 
+
+
+--- PAGE 93 ---
+ 
+81 
+ 
+security, backup, access control, network reliability, integration with existing 
+ERP systems, and long-term performance monitoring. 
+ 
+Finally, the AI assistant depends on the quality of available data and tool 
+responses. If the system data is incomplete or inaccurate, the assistant may 
+provide less useful recommendations. Therefore, data quality and validation 
+remain important for future improvement. 
+ 
+6.9 Summary 
+In summary, the discussion shows that eMAS has achieved strong prototype-
+level results. The system supports integrated factory-management workflows, 
+AI-assisted interaction, scheduling support, shortage resolution, approval-
+based safety, and automated reliability testing. The survey results also show 
+positive user feedback. 
+ 
+However, the system should still be improved and validated in a real factory 
+environment. The most important future needs are live-data testing, larger 
+user evaluation, stronger job and inventory navigation, production deployment 
+validation, and continued improvement of AI explanation quality. 
+ 
+Chapter 7 CONCLUSION AND RECOMMENDATIONS  
+7.1 Introduction 
+This chapter concludes the project by summarising the achievements of the 
+eMAS system, explaining how the project objectives were addressed, and 
+providing recommendations for future improvement. The chapter also 
+highlights the main limitations of the current work and suggests how eMAS 
+can be developed further for real factory deployment. 
+ 
+
+
+--- PAGE 94 ---
+ 
+82 
+ 
+7.2 Achievement of Project Objectives 
+The first objective of the project was to design and develop an integrated 
+manufacturing management system. This objective was achieved through the 
+development of multiple connected modules, including dashboard, jobs, 
+machines, inventory, products and BOM, scheduling, shortage resolution, 
+reports, predictive analysis, and settings. These modules allow factory-related 
+information to be managed in one system instead of being separated across 
+disconnected tools. 
+ 
+The second objective was to support production scheduling and shortage-
+resolution decision-making. This objective was achieved through scheduling 
+proposal generation, machine allocation validation, BOM-based material 
+checking, expected arrival handling, and shortage-resolution rows. The 
+scheduling evaluation showed 89 proposal slots with 0 overlaps, while the 
+shortage-resolution workflow helped explain material and subproduct-related 
+constraints. 
+ 
+The third objective was to provide AI-assisted interaction for factory-
+management tasks. This objective was achieved through the Factory Agent, 
+which allows users to ask factory-related questions, retrieve operational data, 
+receive explanations, and interact with system workflows using natural 
+language. The Factory Agent was supported by 138 generated backend API 
+tools and passed the recorded automated verification gates. 
+ 
+The fourth objective was to improve safety for AI-supported actions. This 
+objective was achieved through the approval workflow. The system requires 
+user approval before applying data-changing actions, which helps prevent 
+unsafe automatic changes. This is important in manufacturing because 
+incorrect operational changes may affect jobs, schedules, inventory, and 
+production planning. 
+
+
+--- PAGE 95 ---
+ 
+83 
+ 
+ 
+The fifth objective was to evaluate the system using suitable testing and 
+feedback methods. This objective was achieved through simulated factory 
+data, seeded manufacturing scenarios, backend tests, Factory Agent tests, 
+frontend component tests, Playwright E2E tests, benchmark checks, 
+frontend/backend oracle contracts, and a small user survey. The final 
+executed E2E evidence recorded 145 passed Playwright tests with 0 failures 
+across mocked, response-document, and seeded full-stack oracle workflows. 
+The frontend unit/component suite recorded 197 passed tests with 0 failures, 
+and the Factory Agent Python suite recorded 1319 passed tests with 0 failures. 
+The survey achieved an overall mean score of 4.71 out of 5.00. 
+ 
+7.3 Conclusion 
+In conclusion, eMAS has successfully developed into a working AI-assisted 
+manufacturing management prototype. The system is able to support factory-
+management activities such as job monitoring, inventory checking, production 
+scheduling, shortage resolution, report access, AI-assisted querying, and 
+approval-based control. 
+The evaluation results show that the system performs well under simulated 
+manufacturing conditions. The seeded dataset provided representative 
+manufacturing records, while the automated tests provided strong technical 
+evidence of reliability. The final non-overlapping counted test groups recorded 
+1713 passed tests with 0 failures. Additional focused verification gates, 
+including response-document E2E and frontend/backend oracle contract tests, 
+also passed and provided extra evidence for important workflows. The user 
+survey also showed positive feedback, with an overall mean score of 4.71 out 
+of 5.00 and a 99% positive response rate. 
+Overall, the project demonstrates that AI-assisted factory-management 
+systems can help reduce manual checking work, improve access to 
+operational data, support scheduling decisions, and improve transparency in 
+
+
+--- PAGE 96 ---
+ 
+84 
+ 
+shortage-resolution workflows. However, the system is still a prototype and 
+should be further validated using real factory data and real industrial users. 
+7.4 Recommendations 
+Several recommendations are proposed for future improvement. First, eMAS 
+should be tested with real factory data. The current evaluation used simulated 
+data, which is suitable for prototype testing, but real production data would 
+provide stronger evidence of practical usefulness. Future testing should 
+include real jobs, machines, inventory records, supplier arrivals, production 
+logs, and downtime events. 
+Second, the system should be evaluated by real factory users. The current 
+survey involved 10 participants and provided useful early feedback, but future 
+evaluation should involve factory managers, production planners, operators, 
+and inventory staff. This would help identify real workflow problems that may 
+not appear during prototype testing. 
+ 
+Third, job and inventory navigation should be improved. The survey showed 
+that job and inventory access had the lowest mean score, although it was still 
+positive. Future improvements may include advanced search, clearer filters, 
+direct links between jobs and related materials, and better navigation from 
+shortage rows to inventory records. 
+ 
+Fourth, the shortage-resolution explanation should continue to be improved. 
+Shortage results must remain clear and traceable so that users understand 
+why a job is affected and what action is required. Future improvements may 
+include clearer root-cause labels, shortage priority ranking, and visual 
+explanation of material flow from BOM to affected jobs. 
+ 
+Fifth, production deployment readiness should be strengthened. Before real 
+factory deployment, the system should include stronger role-based access 
+control, backup and recovery procedures, security testing, audit logs, 
+
+
+--- PAGE 97 ---
+ 
+85 
+ 
+monitoring, and deployment documentation. These are important because 
+factory systems may contain sensitive operational and business data. 
+ 
+Sixth, the AI assistant should continue to improve its explanation and decision-
+support ability. Future work can improve the assistant’s ability to explain 
+scheduling constraints, compare alternative actions, summarise shortage 
+causes, and provide more transparent evidence for recommendations. 
+ 
+7.5 Future Work 
+Future work should focus on moving eMAS from a prototype into a more 
+production-ready system. The most important future work is real factory 
+integration. This may include connecting eMAS with existing ERP, MES, 
+inventory, or machine-monitoring systems so that the platform can use live 
+operational data. 
+ 
+Another future improvement is advanced analytics. The predictive analysis 
+module can be expanded to include machine failure prediction, production 
+delay prediction, material demand forecasting, and capacity planning. These 
+features would make the system more useful for long-term factory decision-
+making. 
+ 
+The scheduling function can also be improved by adding more optimisation 
+objectives. For example, future scheduling can consider delivery priority, 
+machine setup time, operator availability, energy usage, maintenance 
+windows, and cost. This would allow the scheduler to provide more realistic 
+production plans. 
+ 
+The user interface can also be improved based on survey feedback. Better job 
+and inventory navigation, clearer shortage displays, and more visual 
+
+
+--- PAGE 98 ---
+ 
+86 
+ 
+scheduling explanations would improve user confidence and reduce learning 
+effort. 
+ 
+Finally, future work should include a larger user study. A larger evaluation with 
+real factory users would provide stronger evidence of usability, usefulness, 
+and decision-support impact. The study could measure task completion time, 
+number of user interactions, error rate, satisfaction score, and comparison 
+with existing manual processes. 
+ 
+7.6 Final Summary 
+The eMAS project achieved its main aim of developing an AI-assisted 
+manufacturing management system prototype. The system integrates factory 
+data, supports scheduling and shortage-resolution workflows, provides AI-
+assisted interaction, and includes approval-based safety control. The 
+evaluation results show strong technical reliability and positive user feedback. 
+ 
+Although further real-world validation is required, the project demonstrates 
+that eMAS has practical potential for improving factory-management support. 
+With future improvements in live-data integration, real-user evaluation, 
+deployment readiness, and advanced decision support, eMAS can be further 
+developed into a more complete manufacturing assistance platform. 
+ 
+ 
+ 
+ 
+
+
+--- PAGE 99 ---
+ 
+87 
+ 
+References 
+Acharya, S., Khan, A. A., & Päivärinta, T. (2024). Interoperability levels and 
+challenges of digital twins in cyber–physical systems. Journal of Industrial 
+Information 
+Integration, 
+42, 
+100714. 
+https://doi.org/10.1016/J.JII.2024.100714 
+Alqoud, A., Schaefer, D., & Milisavljevic-Syed, J. (2022). Industry 4.0: A 
+systematic review of legacy manufacturing system digital retrofitting. 
+Manufacturing Review, 9. https://doi.org/10.1051/mfreview/2022031 
+Archibald, B., Sevegnani, M., & Xu, M. (2025). Modelling and verifying BDI 
+agents under uncertainty. Science of Computer Programming, 242(3), 
+103254. https://doi.org/10.1016/j.scico.2024.103254 
+ATS Lean Scheduling International. (2024, Feb). Opcenter Production 
+Scheduling for Plastic Injection Molding - ATS Global [Video]. YouTube. 
+https://www.youtube.com/watch?v=nzPnpAsS4PA&t=5s 
+Bahrpeyma, F., & Reichelt, D. (2022). A review of the applications of multi-
+agent reinforcement learning in smart factories. Frontiers in Robotics and 
+AI, 9(December), 1–21. https://doi.org/10.3389/frobt.2022.1027340 
+Bettiol, M., Capestro, M., Di Maria, E., & Ganau, R. (2024). Is this time different? 
+How Industry 4.0 affects firms’ labor productivity. Small Business 
+Economics, 
+62(4), 
+1449–1467. 
+https://doi.org/10.1007/s11187-023-
+00825-8 
+Büchi, G., Cugno, M., & Castagnoli, R. (2020). Smart factory performance and 
+Industry 4.0. Technological Forecasting and Social Change, 150, 119790. 
+https://doi.org/10.1016/J.TECHFORE.2019.119790 
+Carvajal-Flores, D. F., Abril-Jiménez, P., Buhid, E., Fico, G., & Cabrera 
+Umpiérrez, M. F. (2024). Enhancing Industrial Digitalisation through an 
+Adaptable Component for Bridging Semantic Interoperability Gaps. 
+Applied 
+Sciences 
+(Switzerland), 
+14(6). 
+https://doi.org/10.3390/app14062309 
+
+
+--- PAGE 100 ---
+ 
+88 
+ 
+Chen, X., Wang, X., & Qu, Y. (2023). Constructing Ethical AI Based on the 
+“Human-in-the-Loop” 
+System. 
+Systems, 
+11(11). 
+https://doi.org/10.3390/systems11110548 
+Didden, J. B. H. C., Dang, Q. V., & Adan, I. J. B. F. (2023). Decentralized 
+learning multi-agent system for online machine shop scheduling problem. 
+Journal 
+of 
+Manufacturing 
+Systems, 
+67, 
+338–360. 
+https://doi.org/10.1016/J.JMSY.2023.02.004 
+Escobar, C. A., McGovern, M. E., & Morales-Menendez, R. (2021). Quality 4.0: 
+a review of big data challenges in manufacturing. Journal of Intelligent 
+Manufacturing, 32(8), 2319–2334. https://doi.org/10.1007/s10845-021-
+01765-4 
+Fatorachian, H., & Kazemi, H. (2018). A critical investigation of Industry 4 . 0 
+in manufacturing : Theoretical operationalization framework Hajar 
+Fatorachian , Hadi Kazemi. Production Planning and Control, 29(8), 1–
+40. 
+Georgeff, M. P., & Rao, A. S. (1995). BDI agents: From theory to practice. 
+Proceedings of the First International Conference on Multi-Agent Systems 
+(ICMAS-95), 312–319. 
+Guo, Z., Zhang, Y., Liu, S., Wang, X. V., & Wang, L. (2023). Exploring self-
+organization and self-adaption for smart manufacturing complex networks. 
+Frontiers 
+of 
+Engineering 
+Management, 
+10(2), 
+206–222. 
+https://doi.org/10.1007/s42524-022-0225-1 
+Kagermann, Wahlster, W., & Helbig, J. (2013). Recommendations for 
+implementing the strategic initiative INDUSTRIE 4.0. Final Report of the 
+Industrie 4.0 WG, (April). 
+Karaduman, B., Tezel, B. T., & Challenger, M. (2026). FAIR: Fuzzy-BDI agents 
+for intelligent reasoning on smart cyber-physical systems. Expert 
+Systems 
+with 
+Applications, 
+299, 
+130047. 
+https://doi.org/10.1016/j.eswa.2025.130047 
+
+
+--- PAGE 101 ---
+ 
+89 
+ 
+Kaven, L., Huke, P., Göppert, A., & Schmitt, R. H. (2024). Multi agent 
+reinforcement learning for online layout planning and scheduling in 
+flexible assembly systems. Journal of Intelligent Manufacturing, 35(8), 
+3917–3936. https://doi.org/10.1007/s10845-023-02309-8 
+Kim, J., Jeong, H. R., & Park, H. (2023). Key Drivers and Performances of 
+Smart 
+Manufacturing 
+Adoption: 
+A 
+Meta-Analysis. 
+Sustainability 
+(Switzerland), 15(8). https://doi.org/10.3390/su15086496 
+Klesel, M., & Wittmann, H. F. (2025). Retrieval-Augmented Generation (RAG). 
+Business and Information Systems Engineering, 67(4), 551–561. 
+https://doi.org/10.1007/s12599-025-00945-3 
+Li, Y., Liu, Q., Li, X., & Gao, L. (2025a). Manufacturing resource-based self-
+organizing scheduling using multi-agent system and deep reinforcement 
+learning. 
+Journal 
+of 
+Manufacturing 
+Systems, 
+79, 
+179–198. 
+https://doi.org/10.1016/J.JMSY.2025.01.004 
+Li, Y., Liu, Q., Li, X., & Gao, L. (2025b). Manufacturing resource-based self-
+organizing scheduling using multi-agent system and deep reinforcement 
+learning. 
+Journal 
+of 
+Manufacturing 
+Systems, 
+79, 
+179–198. 
+https://doi.org/10.1016/J.JMSY.2025.01.004 
+Lim, J., Vogel-Heuser, B., & Kovalenko, I. (2024). Large Language Model-
+Enabled Multi-Agent Manufacturing Systems. IEEE International 
+Conference on Automation Science and Engineering, 3940–3946. 
+https://doi.org/10.1109/CASE59546.2024.10711432 
+Lin, J. S., & Chen, K. H. (2024). A novel decision support system based on 
+computational intelligence and machine learning: Towards zero-defect 
+manufacturing in injection molding. Journal of Industrial Information 
+Integration, 40, 100621. https://doi.org/10.1016/J.JII.2024.100621 
+Lu, Y. (2017). Industry 4.0: A survey on technologies, applications and open 
+research issues. Journal of Industrial Information Integration, 6, 1–10. 
+https://doi.org/10.1016/J.JII.2017.04.005 
+
+
+--- PAGE 102 ---
+ 
+90 
+ 
+Oks, S. J., Jalowski, M., Lechner, M., Mirschberger, S., Merklein, M., Vogel-
+Heuser, B., & Möslein, K. M. (2024). Cyber-Physical Systems in the 
+Context of Industry 4.0: A Review, Categorization and Outlook. In 
+Information Systems Frontiers (Vol. 26, Number 5). Springer US. 
+https://doi.org/10.1007/s10796-022-10252-x 
+Park, H. S., & Tran, N. H. (2017). Development of an intelligent agent based 
+manufacturing system. ICAART 2017 - Proceedings of the 9th 
+International Conference on Agents and Artificial Intelligence, 2(Icaart), 
+445–450. https://doi.org/10.5220/0006136704450450 
+Pulikottil, T., Estrada-Jimenez, L. A., Ur Rehman, H., Mo, F., Nikghadam-
+Hojjati, S., & Barata, J. (2023). Agent-based manufacturing — review and 
+expert evaluation. International Journal of Advanced Manufacturing 
+Technology, 127(5–6), 2151–2180. https://doi.org/10.1007/s00170-023-
+11517-8 
+Qu, C., Dai, S., Wei, X., Cai, H., Wang, S., Yin, D., Xu, J., & Wen, J. R. (2025). 
+Tool learning with large language models: a survey. Frontiers of Computer 
+Science, 19(8). https://doi.org/10.1007/s11704-024-40678-2 
+Russell, Stuart & Norvig, P. (2021). Global Edition. 
+Shiyong Wang, Jiafu Wan, Di Li, & Chunhua Zhang. (2016). Implementing 
+Smart Factory of Industrie 4.0: An Outlook. International Journal of 
+Distributed Sensor Networks, 2016(1), 1–10. 
+SkyPlanner Aps - Production Scheduling with AI (2024, May). Production 
+scheduling 
+with 
+AI 
+[Video]. 
+YouTube. 
+https://www.youtube.com/watch?v=4qWqZYsXiAI 
+Soori, M., Jough, F. K. G., Dastres, R., & Arezoo, B. (2026). AI-based decision 
+support systems in Industry 4.0, a review. Journal of Economy and 
+Technology, 4, 206–225. https://doi.org/10.1016/J.JECT.2024.08.005 
+Sun, S., Zheng, X., Villalba-Díez, J., & Ordieres-Meré, J. (2020). Data handling 
+in industry 4.0: Interoperability based on distributed ledger technology. 
+Sensors (Switzerland), 20(11), 1–22. https://doi.org/10.3390/s20113046 
+
+
+--- PAGE 103 ---
+ 
+91 
+ 
+Teck, S., Vansteenwegen, P., & Dewil, R. (2023). An efficient multi-agent 
+approach to order picking and robot scheduling in a robotic mobile 
+fulfillment system. Simulation Modelling Practice and Theory, 127, 
+102789. https://doi.org/10.1016/J.SIMPAT.2023.102789 
+Wang, L., Ma, C., Feng, X., Zhang, Z., Yang, H., Zhang, J., Chen, Z., Tang, J., 
+Chen, X., Lin, Y., Zhao, W. X., Wei, Z., & Wen, J. (2024). A survey on 
+large language model based autonomous agents. 18(6), 1–26. 
+Wooldridge, M., & Jennings, N. R. (1995). Intelligent agents: Theory and 
+practice. The Knowledge Engineering Review, 10(2), 115–152. 
+https://doi.org/10.1017/S0269888900008122 
+Yadav, N. S., Aluvalu, R. K., Viswanadhula, U. M., Prashanth, M. S., & Murthy, 
+P. K. N. S. (2025). Cognitive Computing in Manufacturing: Transformative 
+Applications of Natural Language Processing for Human-Machine 
+Interaction in Industry 4.0. International Journal of Computational 
+Methods 
+and 
+Experimental 
+Measurements, 
+13(1), 
+73–83. 
+https://doi.org/10.18280/ijcmem.130108 
+Yu, Z., Zhang, P., & Shi, J. (2026). Transformation of industrial robotics with 
+natural language models: Recent progress and future prospects. 
+Robotics 
+and 
+Computer-Integrated 
+Manufacturing, 
+97, 
+103113. 
+https://doi.org/10.1016/J.RCIM.2025.103113 
+ 
+ 
+
+
+--- PAGE 104 ---
+ 
+92 
+ 
+Appendix 
+Appendix A: Meeting Logs 
+ 
+
+
+--- PAGE 105 ---
+ 
+93 
+ 
+
+
+--- PAGE 106 ---
+ 
+94 
+ 
+
+
+--- PAGE 107 ---
+ 
+95 
+ 
+
+
+--- PAGE 108 ---
+ 
+96 
+ 
+
+
+--- PAGE 109 ---
+ 
+97 
+ 
+ 
+
+
+--- PAGE 110 ---
+ 
+98 
+ 
+
+
+--- PAGE 111 ---
+ 
+99 
+ 
+
+
+--- PAGE 112 ---
+ 
+100 
+ 
+
+
+--- PAGE 113 ---
+ 
+101 
+ 
+
+
+--- PAGE 114 ---
+ 
+102 
+ 
+
+
+--- PAGE 115 ---
+ 
+103 
+ 
+ 
+
+
+--- PAGE 116 ---
+ 
+104 
+ 
+
+
+--- PAGE 117 ---
+ 
+105 
+ 
+
+
+--- PAGE 118 ---
+ 
+106 
+ 
+
+
+--- PAGE 119 ---
+ 
+107 
+ 
+
+
+--- PAGE 120 ---
+ 
+108 
+ 
+
+
+--- PAGE 121 ---
+ 
+109 
+ 
+ 
+
+
+--- PAGE 122 ---
+ 
+110 
+ 
+
+
+--- PAGE 123 ---
+ 
+111 
+ 
+
+
+--- PAGE 124 ---
+ 
+112 
+ 
+
+
+--- PAGE 125 ---
+ 
+113 
+ 
+
+
+--- PAGE 126 ---
+ 
+114 
+ 
+
+
+--- PAGE 127 ---
+ 
+115 
+ 
+ 
+
+
+--- PAGE 128 ---
+ 
+116 
+ 
+
+
+--- PAGE 129 ---
+ 
+117 
+ 
+
+
+--- PAGE 130 ---
+ 
+118 
+ 
+
+
+--- PAGE 131 ---
+ 
+119 
+ 
+
+
+--- PAGE 132 ---
+ 
+120 
+ 
+
+
+--- PAGE 133 ---
+ 
+121 
+ 
+ 
+
+
+--- PAGE 134 ---
+ 
+122 
+ 
+
+
+--- PAGE 135 ---
+ 
+123 
+ 
+
+
+--- PAGE 136 ---
+ 
+124 
+ 
+
+
+--- PAGE 137 ---
+ 
+125 
+ 
+
+
+--- PAGE 138 ---
+ 
+126 
+ 
+
+
+--- PAGE 139 ---
+ 
+127 
+ 
+ 
+ 
+ 
+ 
+
+
+--- PAGE 140 ---
+ 
+128 
+ 
+Appendix B : Turnitin Similarity Index Page 
+ 
+ 
+ 
+
+
+--- PAGE 141 ---
+ 
+129 
+ 
+Appendix C: Automated Test Evidence 
+This appendix lists the supporting evidence files used to justify the automated 
+testing results reported in Chapter 5. The raw logs are stored in the project 
+evidence folder so that the reported pass counts and command results can be 
+traced back to the actual test execution output. 
+Evidence File 
+Description 
+report-evidence/frontend-npm-test.txt 
+Frontend unit and component test 
+output 
+report-evidence/frontend-e2e-
+mocked.txt 
+Mocked 
+Playwright 
+E2E 
+test 
+output 
+report-evidence/frontend-e2e-
+response-document.txt 
+Response-document 
+E2E 
+test 
+output 
+report-evidence/frontend-e2e-seeded-
+oracles.txt 
+Seeded full-stack oracle E2E test 
+output 
+report-evidence/factory-agent-
+pytest.txt 
+Factory Agent Python test output 
+report-evidence/factory-agent-node-
+benchmarks.txt 
+Factory Agent benchmark test 
+output 
+report-evidence/go-test-all.txt 
+Go backend test output 
+report-evidence/frontend-backend-
+oracles.txt 
+Frontend/backend oracle contract 
+test output 
+report-evidence/test-run-summary.md 
+Consolidated 
+automated 
+test 
+summary 
+ 
+All final evidence logs listed above completed with successful exit codes. 
+Some logs include tooling or dependency deprecation warnings, but no final 
+test gate reported a failed test result. 
+
+
+--- PAGE 142 ---
+ 
+130 
+ 
+Appendix D: Survey Questionnaire and Raw Responses 
+This appendix provides the survey questionnaire and anonymised raw 
+response data used to support the usability feedback results reported in 
+Chapter 5. The survey was conducted to evaluate participant perception of the 
+eMAS system in terms of usability, factory-status understanding, job and 
+inventory access, scheduling clarity, shortage-resolution clarity, AI assistant 
+usefulness, approval safety, manual-work reduction, and overall usefulness. 
+ 
+The survey used a five-point Likert scale. The coding used for analysis is 
+shown below. 
+Score Meaning 
+1 
+Strongly Disagree 
+2 
+Disagree 
+3 
+Neutral 
+4 
+Agree 
+5 
+Strongly Agree 
+ 
+The survey questions are listed below. 
+Question 
+Code 
+Survey Statement 
+Q1 
+The system interface is easy to navigate. 
+Q2 
+The dashboard helps me understand the factory status. 
+Q3 
+Job and inventory information can be found easily. 
+Q4 
+The scheduling result is understandable. 
+
+
+--- PAGE 143 ---
+ 
+131 
+ 
+Q5 
+The shortage-resolution result clearly explains the material 
+problem. 
+Q6 
+The AI assistant understands factory-related questions. 
+Q7 
+The AI assistant provides useful information for decision-
+making. 
+Q8 
+The approval workflow makes data-changing actions feel 
+safer. 
+Q9 
+The system can reduce manual checking work compared 
+with doing the task manually. 
+Q10 
+Overall, the system is useful for factory-management 
+support. 
+ 
+The raw survey responses were anonymised by replacing individual 
+timestamps with respondent labels R1 to R10. The anonymised response 
+matrix is shown below. 
+Respondent Q1 Q2 Q3 Q4 Q5 Q6 Q7 Q8 Q9 Q10 
+R1 
+5 
+4 
+5 
+5 
+5 
+5 
+4 
+4 
+4 
+5 
+R2 
+5 
+4 
+4 
+4 
+4 
+5 
+4 
+4 
+4 
+5 
+R3 
+5 
+5 
+4 
+5 
+5 
+4 
+5 
+4 
+5 
+5 
+R4 
+5 
+5 
+3 
+4 
+5 
+4 
+5 
+4 
+5 
+5 
+R5 
+5 
+5 
+5 
+4 
+5 
+5 
+5 
+5 
+5 
+5 
+R6 
+5 
+5 
+4 
+5 
+5 
+5 
+4 
+5 
+5 
+5 
+R7 
+5 
+5 
+4 
+4 
+5 
+5 
+4 
+4 
+4 
+5 
+R8 
+5 
+5 
+5 
+5 
+5 
+5 
+4 
+5 
+5 
+5 
+R9 
+5 
+5 
+5 
+5 
+5 
+5 
+5 
+5 
+5 
+5 
+
+
+--- PAGE 144 ---
+ 
+132 
+ 
+R10 
+5 
+4 
+5 
+5 
+5 
+5 
+5 
+5 
+5 
+5 
+ 
+The original survey data was stored in the project file named eMAS System 
+Evaluation Survey.csv. The timestamp column was not included in the table 
+above because the purpose of the appendix is to show the response evidence 
+used for analysis, not to identify individual respondents. The anonymised 
+responses support the mean score and positive response rate results 
+presented in Chapter 5 
+ 

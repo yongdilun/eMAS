@@ -223,7 +223,13 @@ func Setup(db *gorm.DB) *gin.Engine {
 		v1.GET("/reports/quality-trends", reportsH.QualityTrends)
 		v1.GET("/reports/oee", reportsH.OEETrends)
 		v1.GET("/reports/bottlenecks", reportsH.BottleneckForecast)
+		v1.GET("/reports/downtime", reportsH.Downtime)
 		v1.GET("/reports/maintenance-efficiency", reportsH.MaintenanceEfficiency)
+		v1.GET("/production-analytics/summary", reportsH.AnalyticsSummary)
+		v1.GET("/production-analytics/output", reportsH.AnalyticsProductionOutput)
+		v1.GET("/production-analytics/machine-utilization", reportsH.AnalyticsMachineUtilization)
+		v1.GET("/production-analytics/job-completion", reportsH.AnalyticsJobCompletion)
+		v1.GET("/production-analytics/downtime", reportsH.AnalyticsDowntime)
 
 		// Dashboard
 		v1.GET("/dashboard/kpis", dashboardH.GetKPIs)

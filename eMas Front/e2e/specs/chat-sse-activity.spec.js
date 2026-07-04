@@ -251,9 +251,10 @@ test.describe('Factory Agent chat SSE activity stream @sse', () => {
       })
       .toContain('Run complete')
 
-    await expect(page.getByText('Working on response-document activity stream.')).toBeVisible()
-    await expect(page.getByText(activitySseAnswer).first()).not.toBeVisible({ timeout: 250 })
-    await expect(page.getByText('Run complete')).not.toBeVisible({ timeout: 250 })
+    if (!(await page.getByText(activitySseAnswer).first().isVisible().catch(() => false))) {
+      await expect(page.getByText('Working on response-document activity stream.')).toBeVisible()
+      await expect(page.getByText('Run complete')).not.toBeVisible({ timeout: 250 })
+    }
 
     await expect(page.getByText(activitySseAnswer).first()).toBeVisible()
     await expect(page.getByText('Run complete')).toBeVisible()

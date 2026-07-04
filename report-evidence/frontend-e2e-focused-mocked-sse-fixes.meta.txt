@@ -1,0 +1,4 @@
+command=npx playwright test e2e/specs/chat-cancel-navigation.spec.js e2e/specs/chat-sse-activity.spec.js --project=chromium --grep SO-016|response_document turns render live activity
+started=2026-06-20T15:23:35.6949310+08:00
+ended=2026-06-20T15:23:44.6871668+08:00
+exit_code=0

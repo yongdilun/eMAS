@@ -1,0 +1,5 @@
+command=go test ./internal/handler -run TestCanonicalSeedFileBackedShortageResolutionMatchesSeededServer -count=1 -timeout=15m -v
+exit_code=0
+started=2026-06-20T12:27:48.5673578+08:00
+finished=2026-06-20T12:29:50.9695399+08:00
+duration_seconds=122.402

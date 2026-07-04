@@ -1,4 +1,4 @@
-// Accepts data from GET /reports/machine-utilization
+// Accepts data from GET /production-analytics/machine-utilization
 // Actual API shape: { machine_id, step_id, total_minutes, slot_count }[]
 // Also handles: { machine_name, utilization_pct }[] (pre-computed)
 // Falls back to machine list with 0% while utilization data is unavailable.

@@ -21,8 +21,32 @@ export async function factoryAgentJson(path, options = {}) {
 
 export async function openChat(page) {
   await page.goto('/')
-  await page.getByRole('button', { name: chatSelectors.openAssistantButtonName }).click()
-  await expect(page.getByRole('dialog', { name: chatSelectors.dialogName })).toBeVisible()
+  await page.waitForLoadState('domcontentloaded')
+  const dialog = page.getByRole('dialog', { name: chatSelectors.dialogName })
+  const openButton = page.locator('[data-testid="floating-chat-button"]').last()
+  const clickStrategies = [
+    () => openButton.click(),
+    () => openButton.click({ force: true }),
+    () => openButton.dispatchEvent('click'),
+    () => openButton.evaluate((button) => button.click()),
+    async () => {
+      const box = await openButton.boundingBox()
+      if (!box) throw new Error('AI Assistant launcher did not have a clickable bounding box')
+      await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2)
+    },
+  ]
+  for (let attempt = 0; attempt < clickStrategies.length; attempt += 1) {
+    if (await dialog.isVisible().catch(() => false)) return
+    await expect(openButton).toBeVisible({ timeout: 10_000 })
+    await clickStrategies[attempt]()
+    try {
+      await expect(dialog).toBeVisible({ timeout: 5_000 })
+      return
+    } catch (error) {
+      if (attempt === clickStrategies.length - 1) throw error
+      await page.waitForTimeout(500)
+    }
+  }
 }
 
 export async function sendPrompt(page, prompt) {

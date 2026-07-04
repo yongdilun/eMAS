@@ -1,0 +1,1517 @@
+{
+  "base_url": "http://127.0.0.1:901/v1",
+  "case_ids": [
+    "simple-machine-status",
+    "filtered-job-list",
+    "document-rag-loto",
+    "job-priority-mutation",
+    "machine-active-job-cascade",
+    "conditional-follow-up",
+    "formatting-table",
+    "missing-machine-id",
+    "pronoun-current-job-deadline",
+    "read-job-product-summary",
+    "job-status-short-table",
+    "machine-status-explain",
+    "bulk-priority-change-approval",
+    "field-sort-limit-continuation",
+    "blocked-row-condition",
+    "machine-result-job-id",
+    "machine-result-job-cause",
+    "unsupported-destructive-action",
+    "multi-read-with-formatting",
+    "approval-preview-before-apply"
+  ],
+  "cases": {
+    "approval-preview-before-apply": {
+      "current": {
+        "accuracy": 1.0,
+        "actual_roles": [
+          "required_requirement",
+          "mutation_or_approval_request"
+        ],
+        "case_id": "approval-preview-before-apply",
+        "count_score": 1.0,
+        "coverage_hits": [
+          "low priority jobs",
+          "medium priority",
+          "preview",
+          "approval"
+        ],
+        "coverage_score": 1.0,
+        "critical_score": 1.0,
+        "duration_ms": 0.94,
+        "error": null,
+        "expected_roles": [
+          "required_requirement",
+          "mutation_or_approval_request"
+        ],
+        "item_texts": [
+          "Find low priority jobs due this week",
+          "change them to medium priority after showing a preview for approval."
+        ],
+        "role_score": 1.0,
+        "usage": {
+          "completion_tokens": 0,
+          "prompt_tokens": 0,
+          "total_tokens": 0
+        }
+      },
+      "expected_roles": [
+        "required_requirement",
+        "mutation_or_approval_request"
+      ],
+      "lightweight_llm": {
+        "accuracy": 0.625,
+        "actual_roles": [
+          "mutation_or_approval_request"
+        ],
+        "case_id": "approval-preview-before-apply",
+        "count_score": 0.5,
+        "coverage_hits": [
+          "low priority jobs",
+          "medium priority",
+          "preview",
+          "approval"
+        ],
+        "coverage_score": 1.0,
+        "critical_score": 0.5,
+        "duration_ms": 473.17,
+        "error": null,
+        "expected_roles": [
+          "required_requirement",
+          "mutation_or_approval_request"
+        ],
+        "item_texts": [
+          "Find low priority jobs due this week and change them to medium priority after showing a preview for approval."
+        ],
+        "role_score": 0.5,
+        "usage": {
+          "completion_tokens": 127,
+          "prompt_tokens": 246,
+          "prompt_tokens_details": {
+            "cached_tokens": 221
+          },
+          "total_tokens": 373
+        }
+      },
+      "prompt": "Find low priority jobs due this week and change them to medium priority after showing a preview for approval."
+    },
+    "blocked-row-condition": {
+      "current": {
+        "accuracy": 0.725,
+        "actual_roles": [
+          "required_requirement",
+          "answer_instruction"
+        ],
+        "case_id": "blocked-row-condition",
+        "count_score": 1.0,
+        "coverage_hits": [
+          "low-priority jobs",
+          "blocked",
+          "explain why"
+        ],
+        "coverage_score": 1.0,
+        "critical_score": 0.5,
+        "duration_ms": 1.01,
+        "error": null,
+        "expected_roles": [
+          "required_requirement",
+          "conditional_branch"
+        ],
+        "item_texts": [
+          "List the next 3 low-priority jobs sorted by deadline with only job id, status, priority, and deadline.",
+          "If any listed job is blocked, explain why before suggesting any update."
+        ],
+        "role_score": 0.5,
+        "usage": {
+          "completion_tokens": 0,
+          "prompt_tokens": 0,
+          "total_tokens": 0
+        }
+      },
+      "expected_roles": [
+        "required_requirement",
+        "conditional_branch"
+      ],
+      "lightweight_llm": {
+        "accuracy": 0.425,
+        "actual_roles": [
+          "required_requirement",
+          "answer_instruction",
+          "mutation_or_approval_request",
+          "answer_instruction"
+        ],
+        "case_id": "blocked-row-condition",
+        "count_score": 0.0,
+        "coverage_hits": [
+          "low-priority jobs",
+          "blocked",
+          "explain why"
+        ],
+        "coverage_score": 1.0,
+        "critical_score": 0.5,
+        "duration_ms": 1261.95,
+        "error": null,
+        "expected_roles": [
+          "required_requirement",
+          "conditional_branch"
+        ],
+        "item_texts": [
+          "List the next 3 low-priority jobs sorted by deadline with only job id, status, priority, and deadline.",
+          "Explain/summarize/why/what it means without a new read",
+          "If any listed job is blocked, explain why before suggesting any update",
+          "explain why before suggesting any update."
+        ],
+        "role_score": 0.25,
+        "usage": {
+          "completion_tokens": 353,
+          "prompt_tokens": 264,
+          "prompt_tokens_details": {
+            "cached_tokens": 222
+          },
+          "total_tokens": 617
+        }
+      },
+      "prompt": "List the next 3 low-priority jobs sorted by deadline with only job id, status, priority, and deadline. If any listed job is blocked, explain why before suggesting any update."
+    },
+    "bulk-priority-change-approval": {
+      "current": {
+        "accuracy": 0.6,
+        "actual_roles": [
+          "required_requirement",
+          "mutation_or_approval_request",
+          "mutation_or_approval_request",
+          "mutation_or_approval_request"
+        ],
+        "case_id": "bulk-priority-change-approval",
+        "count_score": 0.0,
+        "coverage_hits": [
+          "medium priority jobs",
+          "high priority",
+          "approval"
+        ],
+        "coverage_score": 1.0,
+        "critical_score": 1.0,
+        "duration_ms": 0.75,
+        "error": null,
+        "expected_roles": [
+          "required_requirement",
+          "mutation_or_approval_request"
+        ],
+        "item_texts": [
+          "List medium priority jobs",
+          "change those jobs to high priority.",
+          "Show what would change",
+          "ask approval before applying."
+        ],
+        "role_score": 0.5,
+        "usage": {
+          "completion_tokens": 0,
+          "prompt_tokens": 0,
+          "total_tokens": 0
+        }
+      },
+      "expected_roles": [
+        "required_requirement",
+        "mutation_or_approval_request"
+      ],
+      "lightweight_llm": {
+        "accuracy": 0.6,
+        "actual_roles": [
+          "required_requirement",
+          "mutation_or_approval_request",
+          "mutation_or_approval_request",
+          "answer_instruction"
+        ],
+        "case_id": "bulk-priority-change-approval",
+        "count_score": 0.0,
+        "coverage_hits": [
+          "medium priority jobs",
+          "high priority",
+          "approval"
+        ],
+        "coverage_score": 1.0,
+        "critical_score": 1.0,
+        "duration_ms": 1198.9,
+        "error": null,
+        "expected_roles": [
+          "required_requirement",
+          "mutation_or_approval_request"
+        ],
+        "item_texts": [
+          "List medium priority jobs",
+          "change those jobs to high priority",
+          "Show what would change",
+          "ask approval before applying"
+        ],
+        "role_score": 0.5,
+        "usage": {
+          "completion_tokens": 336,
+          "prompt_tokens": 249,
+          "prompt_tokens_details": {
+            "cached_tokens": 221
+          },
+          "total_tokens": 585
+        }
+      },
+      "prompt": "List medium priority jobs, then change those jobs to high priority. Show what would change and ask approval before applying."
+    },
+    "conditional-follow-up": {
+      "current": {
+        "accuracy": 0.725,
+        "actual_roles": [
+          "required_requirement",
+          "required_requirement"
+        ],
+        "case_id": "conditional-follow-up",
+        "count_score": 1.0,
+        "coverage_hits": [
+          "M-CNC-01",
+          "running",
+          "active job"
+        ],
+        "coverage_score": 1.0,
+        "critical_score": 0.5,
+        "duration_ms": 0.54,
+        "error": null,
+        "expected_roles": [
+          "required_requirement",
+          "conditional_branch"
+        ],
+        "item_texts": [
+          "Check machine M-CNC-01",
+          "if it is running, show the active job details."
+        ],
+        "role_score": 0.5,
+        "usage": {
+          "completion_tokens": 0,
+          "prompt_tokens": 0,
+          "total_tokens": 0
+        }
+      },
+      "expected_roles": [
+        "required_requirement",
+        "conditional_branch"
+      ],
+      "lightweight_llm": {
+        "accuracy": 0.4583,
+        "actual_roles": [
+          "required_requirement"
+        ],
+        "case_id": "conditional-follow-up",
+        "count_score": 0.5,
+        "coverage_hits": [
+          "M-CNC-01"
+        ],
+        "coverage_score": 0.3333,
+        "critical_score": 0.5,
+        "duration_ms": 499.01,
+        "error": null,
+        "expected_roles": [
+          "required_requirement",
+          "conditional_branch"
+        ],
+        "item_texts": [
+          "Check machine M-CNC-01"
+        ],
+        "role_score": 0.5,
+        "usage": {
+          "completion_tokens": 128,
+          "prompt_tokens": 246,
+          "prompt_tokens_details": {
+            "cached_tokens": 221
+          },
+          "total_tokens": 374
+        }
+      },
+      "prompt": "Check machine M-CNC-01; if it is running, show the active job details."
+    },
+    "document-rag-loto": {
+      "current": {
+        "accuracy": 1.0,
+        "actual_roles": [
+          "required_requirement"
+        ],
+        "case_id": "document-rag-loto",
+        "count_score": 1.0,
+        "coverage_hits": [
+          "LOTO",
+          "lockout",
+          "M-CNC-01"
+        ],
+        "coverage_score": 1.0,
+        "critical_score": 1.0,
+        "duration_ms": 0.34,
+        "error": null,
+        "expected_roles": [
+          "required_requirement"
+        ],
+        "item_texts": [
+          "Use LOTO procedure documents to explain lockout steps for machine M-CNC-01."
+        ],
+        "role_score": 1.0,
+        "usage": {
+          "completion_tokens": 0,
+          "prompt_tokens": 0,
+          "total_tokens": 0
+        }
+      },
+      "expected_roles": [
+        "required_requirement"
+      ],
+      "lightweight_llm": {
+        "accuracy": 0.45,
+        "actual_roles": [
+          "answer_instruction"
+        ],
+        "case_id": "document-rag-loto",
+        "count_score": 1.0,
+        "coverage_hits": [
+          "LOTO",
+          "lockout",
+          "M-CNC-01"
+        ],
+        "coverage_score": 1.0,
+        "critical_score": 0.0,
+        "duration_ms": 453.76,
+        "error": null,
+        "expected_roles": [
+          "required_requirement"
+        ],
+        "item_texts": [
+          "Explain the lockout steps for machine M-CNC-01 using LOTO procedure documents."
+        ],
+        "role_score": 0.0,
+        "usage": {
+          "completion_tokens": 116,
+          "prompt_tokens": 245,
+          "prompt_tokens_details": {
+            "cached_tokens": 221
+          },
+          "total_tokens": 361
+        }
+      },
+      "prompt": "Use LOTO procedure documents to explain lockout steps for machine M-CNC-01."
+    },
+    "field-sort-limit-continuation": {
+      "current": {
+        "accuracy": 1.0,
+        "actual_roles": [
+          "required_requirement"
+        ],
+        "case_id": "field-sort-limit-continuation",
+        "count_score": 1.0,
+        "coverage_hits": [
+          "low priority jobs",
+          "job id",
+          "deadline",
+          "limit 3"
+        ],
+        "coverage_score": 1.0,
+        "critical_score": 1.0,
+        "duration_ms": 0.58,
+        "error": null,
+        "expected_roles": [
+          "required_requirement"
+        ],
+        "item_texts": [
+          "List low priority jobs, only job id and deadline, sorted by deadline ascending, limit 3."
+        ],
+        "role_score": 1.0,
+        "usage": {
+          "completion_tokens": 0,
+          "prompt_tokens": 0,
+          "total_tokens": 0
+        }
+      },
+      "expected_roles": [
+        "required_requirement"
+      ],
+      "lightweight_llm": {
+        "accuracy": 1.0,
+        "actual_roles": [
+          "required_requirement"
+        ],
+        "case_id": "field-sort-limit-continuation",
+        "count_score": 1.0,
+        "coverage_hits": [
+          "low priority jobs",
+          "job id",
+          "deadline",
+          "limit 3"
+        ],
+        "coverage_score": 1.0,
+        "critical_score": 1.0,
+        "duration_ms": 487.28,
+        "error": null,
+        "expected_roles": [
+          "required_requirement"
+        ],
+        "item_texts": [
+          "List low priority jobs, only job id and deadline, sorted by deadline ascending, limit 3."
+        ],
+        "role_score": 1.0,
+        "usage": {
+          "completion_tokens": 130,
+          "prompt_tokens": 246,
+          "prompt_tokens_details": {
+            "cached_tokens": 222
+          },
+          "total_tokens": 376
+        }
+      },
+      "prompt": "List low priority jobs, only job id and deadline, sorted by deadline ascending, limit 3."
+    },
+    "filtered-job-list": {
+      "current": {
+        "accuracy": 1.0,
+        "actual_roles": [
+          "required_requirement"
+        ],
+        "case_id": "filtered-job-list",
+        "count_score": 1.0,
+        "coverage_hits": [
+          "low priority jobs",
+          "deadline",
+          "limit 3"
+        ],
+        "coverage_score": 1.0,
+        "critical_score": 1.0,
+        "duration_ms": 0.44,
+        "error": null,
+        "expected_roles": [
+          "required_requirement"
+        ],
+        "item_texts": [
+          "List low priority jobs sorted by deadline ascending, limit 3."
+        ],
+        "role_score": 1.0,
+        "usage": {
+          "completion_tokens": 0,
+          "prompt_tokens": 0,
+          "total_tokens": 0
+        }
+      },
+      "expected_roles": [
+        "required_requirement"
+      ],
+      "lightweight_llm": {
+        "accuracy": 1.0,
+        "actual_roles": [
+          "required_requirement"
+        ],
+        "case_id": "filtered-job-list",
+        "count_score": 1.0,
+        "coverage_hits": [
+          "low priority jobs",
+          "deadline",
+          "limit 3"
+        ],
+        "coverage_score": 1.0,
+        "critical_score": 1.0,
+        "duration_ms": 515.66,
+        "error": null,
+        "expected_roles": [
+          "required_requirement"
+        ],
+        "item_texts": [
+          "List low priority jobs sorted by deadline ascending, limit 3."
+        ],
+        "role_score": 1.0,
+        "usage": {
+          "completion_tokens": 116,
+          "prompt_tokens": 239,
+          "prompt_tokens_details": {
+            "cached_tokens": 221
+          },
+          "total_tokens": 355
+        }
+      },
+      "prompt": "List low priority jobs sorted by deadline ascending, limit 3."
+    },
+    "formatting-table": {
+      "current": {
+        "accuracy": 0.625,
+        "actual_roles": [
+          "required_requirement"
+        ],
+        "case_id": "formatting-table",
+        "count_score": 0.5,
+        "coverage_hits": [
+          "M-CNC-01",
+          "status",
+          "table"
+        ],
+        "coverage_score": 1.0,
+        "critical_score": 0.5,
+        "duration_ms": 0.7,
+        "error": null,
+        "expected_roles": [
+          "required_requirement",
+          "formatting_instruction"
+        ],
+        "item_texts": [
+          "Show machine M-CNC-01 status and answer in one compact table."
+        ],
+        "role_score": 0.5,
+        "usage": {
+          "completion_tokens": 0,
+          "prompt_tokens": 0,
+          "total_tokens": 0
+        }
+      },
+      "expected_roles": [
+        "required_requirement",
+        "formatting_instruction"
+      ],
+      "lightweight_llm": {
+        "accuracy": 0.725,
+        "actual_roles": [
+          "required_requirement",
+          "answer_instruction"
+        ],
+        "case_id": "formatting-table",
+        "count_score": 1.0,
+        "coverage_hits": [
+          "M-CNC-01",
+          "status",
+          "table"
+        ],
+        "coverage_score": 1.0,
+        "critical_score": 0.5,
+        "duration_ms": 842.3,
+        "error": null,
+        "expected_roles": [
+          "required_requirement",
+          "formatting_instruction"
+        ],
+        "item_texts": [
+          "Show machine M-CNC-01 status",
+          "Answer in one compact table."
+        ],
+        "role_score": 0.5,
+        "usage": {
+          "completion_tokens": 240,
+          "prompt_tokens": 242,
+          "prompt_tokens_details": {
+            "cached_tokens": 221
+          },
+          "total_tokens": 482
+        }
+      },
+      "prompt": "Show machine M-CNC-01 status and answer in one compact table."
+    },
+    "job-priority-mutation": {
+      "current": {
+        "accuracy": 1.0,
+        "actual_roles": [
+          "mutation_or_approval_request"
+        ],
+        "case_id": "job-priority-mutation",
+        "count_score": 1.0,
+        "coverage_hits": [
+          "JOB-BENCH-001",
+          "priority",
+          "high"
+        ],
+        "coverage_score": 1.0,
+        "critical_score": 1.0,
+        "duration_ms": 0.44,
+        "error": null,
+        "expected_roles": [
+          "mutation_or_approval_request"
+        ],
+        "item_texts": [
+          "Change job JOB-BENCH-001 priority to high."
+        ],
+        "role_score": 1.0,
+        "usage": {
+          "completion_tokens": 0,
+          "prompt_tokens": 0,
+          "total_tokens": 0
+        }
+      },
+      "expected_roles": [
+        "mutation_or_approval_request"
+      ],
+      "lightweight_llm": {
+        "accuracy": 1.0,
+        "actual_roles": [
+          "mutation_or_approval_request"
+        ],
+        "case_id": "job-priority-mutation",
+        "count_score": 1.0,
+        "coverage_hits": [
+          "JOB-BENCH-001",
+          "priority",
+          "high"
+        ],
+        "coverage_score": 1.0,
+        "critical_score": 1.0,
+        "duration_ms": 452.4,
+        "error": null,
+        "expected_roles": [
+          "mutation_or_approval_request"
+        ],
+        "item_texts": [
+          "Change job JOB-BENCH-001 priority to high."
+        ],
+        "role_score": 1.0,
+        "usage": {
+          "completion_tokens": 115,
+          "prompt_tokens": 239,
+          "prompt_tokens_details": {
+            "cached_tokens": 221
+          },
+          "total_tokens": 354
+        }
+      },
+      "prompt": "Change job JOB-BENCH-001 priority to high."
+    },
+    "job-status-short-table": {
+      "current": {
+        "accuracy": 1.0,
+        "actual_roles": [
+          "required_requirement",
+          "formatting_instruction"
+        ],
+        "case_id": "job-status-short-table",
+        "count_score": 1.0,
+        "coverage_hits": [
+          "JOB-SEED-001",
+          "status",
+          "table"
+        ],
+        "coverage_score": 1.0,
+        "critical_score": 1.0,
+        "duration_ms": 0.08,
+        "error": null,
+        "expected_roles": [
+          "required_requirement",
+          "formatting_instruction"
+        ],
+        "item_texts": [
+          "Show job JOB-SEED-001 status",
+          "in a short table."
+        ],
+        "role_score": 1.0,
+        "usage": {
+          "completion_tokens": 0,
+          "prompt_tokens": 0,
+          "total_tokens": 0
+        }
+      },
+      "expected_roles": [
+        "required_requirement",
+        "formatting_instruction"
+      ],
+      "lightweight_llm": {
+        "accuracy": 1.0,
+        "actual_roles": [
+          "required_requirement",
+          "formatting_instruction"
+        ],
+        "case_id": "job-status-short-table",
+        "count_score": 1.0,
+        "coverage_hits": [
+          "JOB-SEED-001",
+          "status",
+          "table"
+        ],
+        "coverage_score": 1.0,
+        "critical_score": 1.0,
+        "duration_ms": 477.17,
+        "error": null,
+        "expected_roles": [
+          "required_requirement",
+          "formatting_instruction"
+        ],
+        "item_texts": [
+          "Show job JOB-SEED-001 status",
+          "in a short table."
+        ],
+        "role_score": 1.0,
+        "usage": {
+          "completion_tokens": 126,
+          "prompt_tokens": 242,
+          "prompt_tokens_details": {
+            "cached_tokens": 222
+          },
+          "total_tokens": 368
+        }
+      },
+      "prompt": "Show job JOB-SEED-001 status in a short table."
+    },
+    "machine-active-job-cascade": {
+      "current": {
+        "accuracy": 0.725,
+        "actual_roles": [
+          "required_requirement",
+          "required_requirement"
+        ],
+        "case_id": "machine-active-job-cascade",
+        "count_score": 1.0,
+        "coverage_hits": [
+          "M-CNC-01",
+          "active job",
+          "job status"
+        ],
+        "coverage_score": 1.0,
+        "critical_score": 0.5,
+        "duration_ms": 2.36,
+        "error": null,
+        "expected_roles": [
+          "required_requirement",
+          "conditional_branch"
+        ],
+        "item_texts": [
+          "Show machine M-CNC-01 status",
+          "if it has an active job show that job status."
+        ],
+        "role_score": 0.5,
+        "usage": {
+          "completion_tokens": 0,
+          "prompt_tokens": 0,
+          "total_tokens": 0
+        }
+      },
+      "expected_roles": [
+        "required_requirement",
+        "conditional_branch"
+      ],
+      "lightweight_llm": {
+        "accuracy": 1.0,
+        "actual_roles": [
+          "required_requirement",
+          "conditional_branch"
+        ],
+        "case_id": "machine-active-job-cascade",
+        "count_score": 1.0,
+        "coverage_hits": [
+          "M-CNC-01",
+          "active job",
+          "job status"
+        ],
+        "coverage_score": 1.0,
+        "critical_score": 1.0,
+        "duration_ms": 745.54,
+        "error": null,
+        "expected_roles": [
+          "required_requirement",
+          "conditional_branch"
+        ],
+        "item_texts": [
+          "Show machine M-CNC-01 status",
+          "If the machine has an active job, show that job status."
+        ],
+        "role_score": 1.0,
+        "usage": {
+          "completion_tokens": 209,
+          "prompt_tokens": 248,
+          "prompt_tokens_details": {
+            "cached_tokens": 221
+          },
+          "total_tokens": 457
+        }
+      },
+      "prompt": "Show machine M-CNC-01 status, then if it has an active job show that job status."
+    },
+    "machine-result-job-cause": {
+      "current": {
+        "accuracy": 1.0,
+        "actual_roles": [
+          "required_requirement",
+          "conditional_branch",
+          "answer_instruction"
+        ],
+        "case_id": "machine-result-job-cause",
+        "count_score": 1.0,
+        "coverage_hits": [
+          "M-CNC-01",
+          "job id",
+          "explain the cause"
+        ],
+        "coverage_score": 1.0,
+        "critical_score": 1.0,
+        "duration_ms": 0.59,
+        "error": null,
+        "expected_roles": [
+          "required_requirement",
+          "conditional_branch",
+          "answer_instruction"
+        ],
+        "item_texts": [
+          "Check machine M-CNC-01 status.",
+          "If the machine result includes a job id, read that job",
+          "explain the cause."
+        ],
+        "role_score": 1.0,
+        "usage": {
+          "completion_tokens": 0,
+          "prompt_tokens": 0,
+          "total_tokens": 0
+        }
+      },
+      "expected_roles": [
+        "required_requirement",
+        "conditional_branch",
+        "answer_instruction"
+      ],
+      "lightweight_llm": {
+        "accuracy": 0.75,
+        "actual_roles": [
+          "required_requirement",
+          "answer_instruction"
+        ],
+        "case_id": "machine-result-job-cause",
+        "count_score": 0.6667,
+        "coverage_hits": [
+          "M-CNC-01",
+          "job id",
+          "explain the cause"
+        ],
+        "coverage_score": 1.0,
+        "critical_score": 0.6667,
+        "duration_ms": 812.28,
+        "error": null,
+        "expected_roles": [
+          "required_requirement",
+          "conditional_branch",
+          "answer_instruction"
+        ],
+        "item_texts": [
+          "Check machine M-CNC-01 status.",
+          "If the machine result includes a job id, read that job and explain the cause."
+        ],
+        "role_score": 0.6667,
+        "usage": {
+          "completion_tokens": 218,
+          "prompt_tokens": 253,
+          "prompt_tokens_details": {
+            "cached_tokens": 252
+          },
+          "total_tokens": 471
+        }
+      },
+      "prompt": "Check machine M-CNC-01 status. If the machine result includes a job id, read that job and explain the cause."
+    },
+    "machine-result-job-id": {
+      "current": {
+        "accuracy": 1.0,
+        "actual_roles": [
+          "required_requirement",
+          "conditional_branch"
+        ],
+        "case_id": "machine-result-job-id",
+        "count_score": 1.0,
+        "coverage_hits": [
+          "M-CNC-01",
+          "job id",
+          "read that job"
+        ],
+        "coverage_score": 1.0,
+        "critical_score": 1.0,
+        "duration_ms": 0.5,
+        "error": null,
+        "expected_roles": [
+          "required_requirement",
+          "conditional_branch"
+        ],
+        "item_texts": [
+          "Check machine M-CNC-01 status.",
+          "If the machine result includes a job id, read that job."
+        ],
+        "role_score": 1.0,
+        "usage": {
+          "completion_tokens": 0,
+          "prompt_tokens": 0,
+          "total_tokens": 0
+        }
+      },
+      "expected_roles": [
+        "required_requirement",
+        "conditional_branch"
+      ],
+      "lightweight_llm": {
+        "accuracy": 1.0,
+        "actual_roles": [
+          "required_requirement",
+          "conditional_branch"
+        ],
+        "case_id": "machine-result-job-id",
+        "count_score": 1.0,
+        "coverage_hits": [
+          "M-CNC-01",
+          "job id",
+          "read that job"
+        ],
+        "coverage_score": 1.0,
+        "critical_score": 1.0,
+        "duration_ms": 907.41,
+        "error": null,
+        "expected_roles": [
+          "required_requirement",
+          "conditional_branch"
+        ],
+        "item_texts": [
+          "Check machine M-CNC-01 status.",
+          "If the machine result includes a job id, read that job."
+        ],
+        "role_score": 1.0,
+        "usage": {
+          "completion_tokens": 254,
+          "prompt_tokens": 249,
+          "prompt_tokens_details": {
+            "cached_tokens": 248
+          },
+          "total_tokens": 503
+        }
+      },
+      "prompt": "Check machine M-CNC-01 status. If the machine result includes a job id, read that job."
+    },
+    "machine-status-explain": {
+      "current": {
+        "accuracy": 1.0,
+        "actual_roles": [
+          "required_requirement",
+          "answer_instruction"
+        ],
+        "case_id": "machine-status-explain",
+        "count_score": 1.0,
+        "coverage_hits": [
+          "M-CNC-01",
+          "status",
+          "explain"
+        ],
+        "coverage_score": 1.0,
+        "critical_score": 1.0,
+        "duration_ms": 0.45,
+        "error": null,
+        "expected_roles": [
+          "required_requirement",
+          "answer_instruction"
+        ],
+        "item_texts": [
+          "Show machine M-CNC-01 status",
+          "explain what it means."
+        ],
+        "role_score": 1.0,
+        "usage": {
+          "completion_tokens": 0,
+          "prompt_tokens": 0,
+          "total_tokens": 0
+        }
+      },
+      "expected_roles": [
+        "required_requirement",
+        "answer_instruction"
+      ],
+      "lightweight_llm": {
+        "accuracy": 1.0,
+        "actual_roles": [
+          "required_requirement",
+          "answer_instruction"
+        ],
+        "case_id": "machine-status-explain",
+        "count_score": 1.0,
+        "coverage_hits": [
+          "M-CNC-01",
+          "status",
+          "explain"
+        ],
+        "coverage_score": 1.0,
+        "critical_score": 1.0,
+        "duration_ms": 829.12,
+        "error": null,
+        "expected_roles": [
+          "required_requirement",
+          "answer_instruction"
+        ],
+        "item_texts": [
+          "Show machine M-CNC-01 status",
+          "Explain what it means"
+        ],
+        "role_score": 1.0,
+        "usage": {
+          "completion_tokens": 225,
+          "prompt_tokens": 241,
+          "prompt_tokens_details": {
+            "cached_tokens": 222
+          },
+          "total_tokens": 466
+        }
+      },
+      "prompt": "Show machine M-CNC-01 status and explain what it means."
+    },
+    "missing-machine-id": {
+      "current": {
+        "accuracy": 1.0,
+        "actual_roles": [
+          "clarification_need"
+        ],
+        "case_id": "missing-machine-id",
+        "count_score": 1.0,
+        "coverage_hits": [
+          "machine",
+          "status"
+        ],
+        "coverage_score": 1.0,
+        "critical_score": 1.0,
+        "duration_ms": 1.19,
+        "error": null,
+        "expected_roles": [
+          "clarification_need"
+        ],
+        "item_texts": [
+          "Show the machine status."
+        ],
+        "role_score": 1.0,
+        "usage": {
+          "completion_tokens": 0,
+          "prompt_tokens": 0,
+          "total_tokens": 0
+        }
+      },
+      "expected_roles": [
+        "clarification_need"
+      ],
+      "lightweight_llm": {
+        "accuracy": 1.0,
+        "actual_roles": [
+          "clarification_need"
+        ],
+        "case_id": "missing-machine-id",
+        "count_score": 1.0,
+        "coverage_hits": [
+          "machine",
+          "status"
+        ],
+        "coverage_score": 1.0,
+        "critical_score": 1.0,
+        "duration_ms": 379.3,
+        "error": null,
+        "expected_roles": [
+          "clarification_need"
+        ],
+        "item_texts": [
+          "Show the machine status."
+        ],
+        "role_score": 1.0,
+        "usage": {
+          "completion_tokens": 98,
+          "prompt_tokens": 231,
+          "prompt_tokens_details": {
+            "cached_tokens": 222
+          },
+          "total_tokens": 329
+        }
+      },
+      "prompt": "Show the machine status."
+    },
+    "multi-read-with-formatting": {
+      "current": {
+        "accuracy": 0.85,
+        "actual_roles": [
+          "required_requirement",
+          "required_requirement",
+          "required_requirement",
+          "formatting_instruction"
+        ],
+        "case_id": "multi-read-with-formatting",
+        "count_score": 1.0,
+        "coverage_hits": [
+          "M-CNC-01",
+          "JOB-BENCH-001",
+          "summarize",
+          "bullets"
+        ],
+        "coverage_score": 1.0,
+        "critical_score": 0.6667,
+        "duration_ms": 0.42,
+        "error": null,
+        "expected_roles": [
+          "required_requirement",
+          "required_requirement",
+          "answer_instruction",
+          "formatting_instruction"
+        ],
+        "item_texts": [
+          "Show machine M-CNC-01 status",
+          "job JOB-BENCH-001 status",
+          "summarize both",
+          "in bullets."
+        ],
+        "role_score": 0.75,
+        "usage": {
+          "completion_tokens": 0,
+          "prompt_tokens": 0,
+          "total_tokens": 0
+        }
+      },
+      "expected_roles": [
+        "required_requirement",
+        "required_requirement",
+        "answer_instruction",
+        "formatting_instruction"
+      ],
+      "lightweight_llm": {
+        "accuracy": 0.65,
+        "actual_roles": [
+          "required_requirement",
+          "answer_instruction"
+        ],
+        "case_id": "multi-read-with-formatting",
+        "count_score": 0.5,
+        "coverage_hits": [
+          "M-CNC-01",
+          "JOB-BENCH-001",
+          "summarize",
+          "bullets"
+        ],
+        "coverage_score": 1.0,
+        "critical_score": 0.6667,
+        "duration_ms": 857.67,
+        "error": null,
+        "expected_roles": [
+          "required_requirement",
+          "required_requirement",
+          "answer_instruction",
+          "formatting_instruction"
+        ],
+        "item_texts": [
+          "Show machine M-CNC-01 status and job JOB-BENCH-001 status",
+          "Summarize both in bullets"
+        ],
+        "role_score": 0.5,
+        "usage": {
+          "completion_tokens": 232,
+          "prompt_tokens": 252,
+          "prompt_tokens_details": {
+            "cached_tokens": 221
+          },
+          "total_tokens": 484
+        }
+      },
+      "prompt": "Show machine M-CNC-01 status and job JOB-BENCH-001 status, then summarize both in bullets."
+    },
+    "pronoun-current-job-deadline": {
+      "current": {
+        "accuracy": 0.725,
+        "actual_roles": [
+          "required_requirement",
+          "required_requirement"
+        ],
+        "case_id": "pronoun-current-job-deadline",
+        "count_score": 1.0,
+        "coverage_hits": [
+          "M-CNC-01",
+          "current job",
+          "deadline"
+        ],
+        "coverage_score": 1.0,
+        "critical_score": 0.5,
+        "duration_ms": 0.28,
+        "error": null,
+        "expected_roles": [
+          "required_requirement",
+          "conditional_branch"
+        ],
+        "item_texts": [
+          "For machine M-CNC-01, show its current job",
+          "show its deadline."
+        ],
+        "role_score": 0.5,
+        "usage": {
+          "completion_tokens": 0,
+          "prompt_tokens": 0,
+          "total_tokens": 0
+        }
+      },
+      "expected_roles": [
+        "required_requirement",
+        "conditional_branch"
+      ],
+      "lightweight_llm": {
+        "accuracy": 0.625,
+        "actual_roles": [
+          "required_requirement"
+        ],
+        "case_id": "pronoun-current-job-deadline",
+        "count_score": 0.5,
+        "coverage_hits": [
+          "M-CNC-01",
+          "current job",
+          "deadline"
+        ],
+        "coverage_score": 1.0,
+        "critical_score": 0.5,
+        "duration_ms": 427.21,
+        "error": null,
+        "expected_roles": [
+          "required_requirement",
+          "conditional_branch"
+        ],
+        "item_texts": [
+          "Show the current job and deadline for machine M-CNC-01."
+        ],
+        "role_score": 0.5,
+        "usage": {
+          "completion_tokens": 116,
+          "prompt_tokens": 245,
+          "prompt_tokens_details": {
+            "cached_tokens": 221
+          },
+          "total_tokens": 361
+        }
+      },
+      "prompt": "For machine M-CNC-01, show its current job and then show its deadline."
+    },
+    "read-job-product-summary": {
+      "current": {
+        "accuracy": 1.0,
+        "actual_roles": [
+          "required_requirement",
+          "conditional_branch",
+          "answer_instruction"
+        ],
+        "case_id": "read-job-product-summary",
+        "count_score": 1.0,
+        "coverage_hits": [
+          "JOB-SEED-001",
+          "product",
+          "summarize"
+        ],
+        "coverage_score": 1.0,
+        "critical_score": 1.0,
+        "duration_ms": 0.9,
+        "error": null,
+        "expected_roles": [
+          "required_requirement",
+          "conditional_branch",
+          "answer_instruction"
+        ],
+        "item_texts": [
+          "Read job JOB-SEED-001.",
+          "If it has a product, read that product too",
+          "summarize both."
+        ],
+        "role_score": 1.0,
+        "usage": {
+          "completion_tokens": 0,
+          "prompt_tokens": 0,
+          "total_tokens": 0
+        }
+      },
+      "expected_roles": [
+        "required_requirement",
+        "conditional_branch",
+        "answer_instruction"
+      ],
+      "lightweight_llm": {
+        "accuracy": 1.0,
+        "actual_roles": [
+          "required_requirement",
+          "conditional_branch",
+          "answer_instruction"
+        ],
+        "case_id": "read-job-product-summary",
+        "count_score": 1.0,
+        "coverage_hits": [
+          "JOB-SEED-001",
+          "product",
+          "summarize"
+        ],
+        "coverage_score": 1.0,
+        "critical_score": 1.0,
+        "duration_ms": 1010.98,
+        "error": null,
+        "expected_roles": [
+          "required_requirement",
+          "conditional_branch",
+          "answer_instruction"
+        ],
+        "item_texts": [
+          "Read job JOB-SEED-001.",
+          "If it has a product, read that product too and summarize both.",
+          "summarize both."
+        ],
+        "role_score": 1.0,
+        "usage": {
+          "completion_tokens": 281,
+          "prompt_tokens": 251,
+          "prompt_tokens_details": {
+            "cached_tokens": 221
+          },
+          "total_tokens": 532
+        }
+      },
+      "prompt": "Read job JOB-SEED-001. If it has a product, read that product too and summarize both."
+    },
+    "simple-machine-status": {
+      "current": {
+        "accuracy": 1.0,
+        "actual_roles": [
+          "required_requirement"
+        ],
+        "case_id": "simple-machine-status",
+        "count_score": 1.0,
+        "coverage_hits": [
+          "M-CNC-01",
+          "status"
+        ],
+        "coverage_score": 1.0,
+        "critical_score": 1.0,
+        "duration_ms": 0.94,
+        "error": null,
+        "expected_roles": [
+          "required_requirement"
+        ],
+        "item_texts": [
+          "Show machine M-CNC-01 status."
+        ],
+        "role_score": 1.0,
+        "usage": {
+          "completion_tokens": 0,
+          "prompt_tokens": 0,
+          "total_tokens": 0
+        }
+      },
+      "expected_roles": [
+        "required_requirement"
+      ],
+      "lightweight_llm": {
+        "accuracy": 1.0,
+        "actual_roles": [
+          "required_requirement"
+        ],
+        "case_id": "simple-machine-status",
+        "count_score": 1.0,
+        "coverage_hits": [
+          "M-CNC-01",
+          "status"
+        ],
+        "coverage_score": 1.0,
+        "critical_score": 1.0,
+        "duration_ms": 721.02,
+        "error": null,
+        "expected_roles": [
+          "required_requirement"
+        ],
+        "item_texts": [
+          "Show machine M-CNC-01 status."
+        ],
+        "role_score": 1.0,
+        "usage": {
+          "completion_tokens": 108,
+          "prompt_tokens": 236,
+          "prompt_tokens_details": {
+            "cached_tokens": 221
+          },
+          "total_tokens": 344
+        }
+      },
+      "prompt": "Show machine M-CNC-01 status."
+    },
+    "unsupported-destructive-action": {
+      "current": {
+        "accuracy": 0.45,
+        "actual_roles": [
+          "required_requirement"
+        ],
+        "case_id": "unsupported-destructive-action",
+        "count_score": 1.0,
+        "coverage_hits": [
+          "unsafe",
+          "destructive"
+        ],
+        "coverage_score": 1.0,
+        "critical_score": 0.0,
+        "duration_ms": 0.28,
+        "error": null,
+        "expected_roles": [
+          "mutation_or_approval_request"
+        ],
+        "item_texts": [
+          "Perform an unsafe unsupported destructive factory action."
+        ],
+        "role_score": 0.0,
+        "usage": {
+          "completion_tokens": 0,
+          "prompt_tokens": 0,
+          "total_tokens": 0
+        }
+      },
+      "expected_roles": [
+        "mutation_or_approval_request"
+      ],
+      "lightweight_llm": {
+        "accuracy": 1.0,
+        "actual_roles": [
+          "mutation_or_approval_request"
+        ],
+        "case_id": "unsupported-destructive-action",
+        "count_score": 1.0,
+        "coverage_hits": [
+          "unsafe",
+          "destructive"
+        ],
+        "coverage_score": 1.0,
+        "critical_score": 1.0,
+        "duration_ms": 452.77,
+        "error": null,
+        "expected_roles": [
+          "mutation_or_approval_request"
+        ],
+        "item_texts": [
+          "Perform an unsafe unsupported destructive factory action."
+        ],
+        "role_score": 1.0,
+        "usage": {
+          "completion_tokens": 120,
+          "prompt_tokens": 234,
+          "prompt_tokens_details": {
+            "cached_tokens": 221
+          },
+          "total_tokens": 354
+        }
+      },
+      "prompt": "Perform an unsafe unsupported destructive factory action."
+    }
+  },
+  "current": {
+    "avg_accuracy": 0.8713,
+    "avg_duration_ms": 0.69,
+    "avg_tokens_per_case": 0.0,
+    "cases": 20,
+    "cases_ge_0_8": 13,
+    "completion_tokens": 0,
+    "errors": 0,
+    "local_external_api_cost_usd": 0.0,
+    "p95_duration_ms": 2.36,
+    "perfect_cases": 12,
+    "prompt_tokens": 0,
+    "total_tokens": 0
+  },
+  "decision": {
+    "accuracy_delta": -0.0559,
+    "latency_delta_ms": 689.56,
+    "reason": "lightweight LLM accuracy is lower than current splitter",
+    "verdict": "do_not_upgrade"
+  },
+  "lightweight_llm": {
+    "avg_accuracy": 0.8154,
+    "avg_duration_ms": 690.25,
+    "avg_tokens_per_case": 427.3,
+    "cases": 20,
+    "cases_ge_0_8": 11,
+    "completion_tokens": 3648,
+    "errors": 0,
+    "local_external_api_cost_usd": 0.0,
+    "p95_duration_ms": 1261.95,
+    "perfect_cases": 11,
+    "prompt_tokens": 4898,
+    "total_tokens": 8546
+  },
+  "model": "bartowski/Qwen2.5-1.5B-Instruct-GGUF:Q4_K_M"
+}

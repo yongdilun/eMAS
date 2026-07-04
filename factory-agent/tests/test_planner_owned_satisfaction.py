@@ -16,7 +16,7 @@ from factory_agent.planning.v2_contracts import (
     SatisfactionCheck,
 )
 from factory_agent.planning.v2_trace_compatibility import build_direct_v2_compatibility_run
-from factory_agent.planning.v2_satisfaction import validate_v2_final_state
+from factory_agent.planning.v2_satisfaction import apply_deterministic_evidence_satisfaction, validate_v2_final_state
 from factory_agent.schemas import ToolInfo
 
 
@@ -206,6 +206,54 @@ def _api_evidence(
         tool_name="get__jobs" if rows is not None else f"get__{entity}s_{{id}}",
         normalized_result=normalized_result,
     )
+
+
+def test_pdf_file_download_evidence_satisfies_report_requirement():
+    requirement = RequirementLedgerEntry(
+        id="req-report",
+        goal="Generate machine utilization report",
+        requirement_type="filtered_collection",
+        entity="report",
+        intent_operation="report_filtered_collection",
+        source_of_truth="operational_state",
+        constraints={"report_type": "machine utilization", "report_format": "pdf"},
+        locked_constraints=["report_type", "report_format"],
+        status="open",
+    )
+    evidence = EvidenceLedgerEntry(
+        id="ev-report",
+        requirement_id=requirement.id,
+        source_type="api_tool",
+        source_of_truth="operational_state",
+        confidence="deterministic",
+        tool_name="get__reports_machine-utilization",
+        normalized_result={
+            "entity": "report",
+            "status": "file_ready",
+            "file_download": {
+                "kind": "file_download",
+                "filename": "machine-utilization-2026-07-01-2026-07-07.pdf",
+                "content_type": "application/pdf",
+                "download_url": "http://testserver/api/v1/reports/machine-utilization",
+                "view_url": "http://testserver/api/v1/reports/machine-utilization",
+            },
+        },
+    )
+    state = PlannerOwnedLoopV2State(
+        requirement_ledger=RequirementLedger(
+            user_goal=requirement.goal,
+            requirements=[requirement],
+            revision=1,
+        ),
+        evidence_ledger=EvidenceLedger(evidence=[evidence]),
+    )
+
+    apply_deterministic_evidence_satisfaction(state)
+    result = validate_v2_final_state(state)
+
+    assert requirement.status == "satisfied"
+    assert requirement.satisfaction_checks[1].check == "file_download"
+    assert result.status == "passed"
 
 
 def test_requirement_expansion_final_validation_blocks_open_required_child():

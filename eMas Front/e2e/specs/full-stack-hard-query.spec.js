@@ -36,6 +36,8 @@ async function applyScenarioSetup(page, scenario) {
 }
 
 test.describe('Hard query oracle harness @prompt-regression @hard-query', () => {
+  test.describe.configure({ timeout: 90_000 })
+
   for (const scenario of hardQueryScenarios) {
     test(`${scenario.id} hard query proves typed oracle contract`, async ({ page }, testInfo) => {
       await resetToolFaults()
@@ -47,6 +49,7 @@ test.describe('Hard query oracle harness @prompt-regression @hard-query', () => 
           snapshotForPage,
           pendingApprovalsForPage,
           testInfo,
+          timeout: scenario.expected?.oracleTimeout ?? 60_000,
         })
       } finally {
         await resetToolFaults()

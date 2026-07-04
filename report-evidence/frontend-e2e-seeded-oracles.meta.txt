@@ -1,0 +1,4 @@
+command=npm run test:e2e:seeded-oracles
+started=2026-06-20T15:10:50.8350594+08:00
+ended=2026-06-20T15:19:37.6426455+08:00
+exit_code=0

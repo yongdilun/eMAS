@@ -1,0 +1,4 @@
+command=npx playwright test e2e/specs/full-stack-intent-entity.spec.js --project=chromium-seeded --grep SO-022
+started=2026-06-20T15:10:29.0987424+08:00
+ended=2026-06-20T15:10:41.2160524+08:00
+exit_code=0

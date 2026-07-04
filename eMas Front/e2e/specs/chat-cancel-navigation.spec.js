@@ -72,44 +72,41 @@ test.describe('Factory Agent chat cancel and disconnect scenarios', () => {
     await openChat(page)
     await sendChatPrompt(page, disconnectPrompt)
     const sessionId = await activeSessionId(page)
-
-    await expect
-      .poll(async () => {
-        const connections = await connectionsFor({
-          scenario: 'modalDisconnectActiveRun',
-          session_id: sessionId,
-          stream: 'notification',
-          event: 'open',
-        })
-        return connections.length
-      })
-      .toBeGreaterThan(0)
     await expect(page.getByText('Understanding your request').first()).toBeVisible()
 
-    const observedStreams = ['notification']
-    const activityConnections = await connectionsFor({
-      scenario: 'modalDisconnectActiveRun',
-      session_id: sessionId,
-      stream: 'activity',
-      event: 'open',
-    })
-    if (activityConnections.length > 0) observedStreams.push('activity')
+    let observedStreams = []
+    await expect
+      .poll(async () => {
+        const streams = []
+        for (const stream of ['notification', 'activity']) {
+          const connections = await connectionsFor({
+            session_id: sessionId,
+            stream,
+            event: 'open',
+          })
+          for (const connection of connections) {
+            if (connection.connection_id) streams.push({ stream, connectionId: connection.connection_id })
+          }
+        }
+        observedStreams = streams
+        return streams.length
+      })
+      .toBeGreaterThan(0)
 
     await page.getByRole('button', { name: 'Close' }).first().click()
     await expect(page.getByRole('dialog', { name: chatSelectors.dialogName })).toHaveCount(0)
 
-    for (const stream of observedStreams) {
+    for (const { stream, connectionId } of observedStreams) {
       await expect
         .poll(async () => {
           const connections = await connectionsFor({
-            scenario: 'modalDisconnectActiveRun',
             session_id: sessionId,
             stream,
             event: 'close',
           })
-          return connections.length
+          return connections.some((connection) => connection.connection_id === connectionId)
         })
-        .toBeGreaterThan(0)
+        .toBe(true)
     }
   })
 })

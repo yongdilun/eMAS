@@ -1,0 +1,5 @@
+command=go test ./internal/handler -run TestAPIContractGoldenInventory -count=1 -v
+exit_code=0
+started=2026-06-20T12:43:24.3695779+08:00
+finished=2026-06-20T12:43:27.2098221+08:00
+duration_seconds=2.84

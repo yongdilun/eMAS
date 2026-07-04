@@ -1,0 +1,4 @@
+command=npm run test:e2e:mocked
+started=2026-06-20T15:23:52.6488729+08:00
+ended=2026-06-20T15:24:58.0361505+08:00
+exit_code=0

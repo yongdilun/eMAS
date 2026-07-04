@@ -1,0 +1,4 @@
+command=python -m pytest -q
+started=2026-06-20T15:26:07.1444033+08:00
+ended=2026-06-20T15:36:32.7025202+08:00
+exit_code=0

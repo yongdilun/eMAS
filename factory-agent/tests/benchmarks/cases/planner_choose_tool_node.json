@@ -46,6 +46,11 @@
     "node": "planner_choose_tool_node",
     "behavior": "LLM choice among candidates",
     "prompt": "Show status for job JOB-BENCH-001, not the list of jobs.",
+    "autonomy_probe": {
+      "signals": ["candidate_conflict", "llm_choice", "schema_validation"],
+      "safety_cap": "read_only",
+      "expected_recommendation": "guarded_pilot"
+    },
     "fixture": {
       "selector_names": ["get__jobs", "get__jobs_{id}"]
     },

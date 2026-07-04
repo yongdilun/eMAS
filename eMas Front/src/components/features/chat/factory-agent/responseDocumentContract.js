@@ -27,6 +27,7 @@ const BLOCK_TYPES = new Set([
   'knowledge_answer',
   'safety_notice',
   'source_list',
+  'file_download',
   'warning',
   'diagnostic',
 ])
@@ -269,6 +270,10 @@ function normalizeBlock(block, index, violations) {
     user_message: cleanString(block.user_message || block.userMessage),
     answer: cleanString(block.answer),
     safety_content: cleanString(block.safety_content || block.safetyContent),
+    filename: cleanString(block.filename),
+    content_type: cleanString(block.content_type || block.contentType),
+    download_url: cleanString(block.download_url || block.downloadUrl),
+    view_url: cleanString(block.view_url || block.viewUrl),
     approval_id: cleanString(block.approval_id || block.approvalId) || null,
     operation_id: cleanString(block.operation_id || block.operationId) || null,
     contract: cleanString(block.contract) || null,
@@ -320,6 +325,7 @@ function defaultBlockTitle(type) {
   if (type === 'knowledge_answer') return ''
   if (type === 'safety_notice') return 'Safety notice'
   if (type === 'source_list') return 'Knowledge sources'
+  if (type === 'file_download') return 'PDF report ready'
   if (type === 'diagnostic') return 'Needs attention'
   if (type === 'warning') return 'Warning'
   return ''

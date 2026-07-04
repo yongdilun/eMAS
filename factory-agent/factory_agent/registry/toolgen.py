@@ -63,23 +63,53 @@ def _resolve_schema(spec: dict[str, Any], schema: dict[str, Any] | None) -> dict
     return normalized
 
 
+def _response_content_types(spec: dict[str, Any], operation: dict[str, Any]) -> list[str]:
+    content_types: list[str] = []
+
+    def add(value: Any) -> None:
+        if isinstance(value, str) and value.strip():
+            content_types.append(value.strip().lower())
+        elif isinstance(value, list):
+            for item in value:
+                add(item)
+
+    add(spec.get("produces"))
+    add(operation.get("produces"))
+    responses = operation.get("responses") if isinstance(operation.get("responses"), dict) else {}
+    for response in responses.values():
+        if not isinstance(response, dict):
+            continue
+        content = response.get("content") if isinstance(response.get("content"), dict) else {}
+        for media_type in content.keys():
+            add(media_type)
+    return list(dict.fromkeys(content_types))
+
+
+def _with_response_content_types(schema: dict[str, Any], content_types: list[str]) -> dict[str, Any]:
+    enriched = dict(schema or {"type": "object", "properties": {}})
+    if content_types:
+        enriched["x-response-content-types"] = content_types
+    return enriched
+
+
 def _infer_output_schema(spec: dict[str, Any], operation: dict[str, Any]) -> dict[str, Any]:
+    content_types = _response_content_types(spec, operation)
     responses = operation.get("responses") if isinstance(operation.get("responses"), dict) else {}
     for status in ("200", "201", "202", "204", "default"):
         response = responses.get(status)
         if not isinstance(response, dict):
             continue
         if isinstance(response.get("schema"), dict):
-            return _resolve_schema(spec, response.get("schema"))
+            return _with_response_content_types(_resolve_schema(spec, response.get("schema")), content_types)
         content = response.get("content") if isinstance(response.get("content"), dict) else {}
         for media in ("application/json", "application/*+json", "*/*"):
             candidate = content.get(media)
             if isinstance(candidate, dict) and isinstance(candidate.get("schema"), dict):
-                return _resolve_schema(spec, candidate.get("schema"))
+                return _with_response_content_types(_resolve_schema(spec, candidate.get("schema")), content_types)
         for candidate in content.values():
             if isinstance(candidate, dict) and isinstance(candidate.get("schema"), dict):
-                return _resolve_schema(spec, candidate.get("schema"))
-    return {"type": "object", "properties": {}}
+                return _with_response_content_types(_resolve_schema(spec, candidate.get("schema")), content_types)
+    return _with_response_content_types({"type": "object", "properties": {}}, content_types)
 
 
 def _allowed_roles_for_operation(method: str, operation: dict[str, Any]) -> list[str]:

@@ -1,0 +1,369 @@
+{
+  "generated_at": "2026-06-20T07:37:34.737992+00:00",
+  "live_llm_enabled": false,
+  "node_count": 11,
+  "nodes": {
+    "approval_node": {
+      "case_count": 8,
+      "completed_case_count": 8,
+      "complexity_pressure": 15,
+      "deterministic_brittleness": 9,
+      "expectation_matched": null,
+      "expected_recommendations": [],
+      "guardability": 10,
+      "llm_lift_signal": 0,
+      "node": "approval_node",
+      "pass_rate": 1.0,
+      "passed_case_count": 8,
+      "reasons": [
+        "Node owns execution or final authority; autonomous behavior should not bypass deterministic control."
+      ],
+      "recommendation": "do_not_autonomize",
+      "safety_cap": "no_autonomous_action",
+      "score": 34,
+      "signals": [
+        "multi_step",
+        "stale_evidence",
+        "write_approval"
+      ]
+    },
+    "evidence_observation_node": {
+      "case_count": 6,
+      "completed_case_count": 6,
+      "complexity_pressure": 30,
+      "deterministic_brittleness": 17,
+      "expectation_matched": null,
+      "expected_recommendations": [],
+      "guardability": 16,
+      "llm_lift_signal": 0,
+      "node": "evidence_observation_node",
+      "pass_rate": 1.0,
+      "passed_case_count": 6,
+      "reasons": [
+        "Node is a deterministic validation/projection layer; use score as observation signal only.",
+        "Scenario set has high complexity pressure.",
+        "Deterministic path shows brittleness or shallow assertion pressure."
+      ],
+      "recommendation": "observe",
+      "safety_cap": "deterministic_only",
+      "score": 63,
+      "signals": [
+        "conditional",
+        "cross_entity",
+        "cross_source",
+        "failure_recovery",
+        "missing_entity",
+        "multi_step",
+        "stale_evidence",
+        "write_approval"
+      ]
+    },
+    "finalize_node": {
+      "case_count": 3,
+      "completed_case_count": 3,
+      "complexity_pressure": 5,
+      "deterministic_brittleness": 4,
+      "expectation_matched": null,
+      "expected_recommendations": [],
+      "guardability": 12,
+      "llm_lift_signal": 0,
+      "node": "finalize_node",
+      "pass_rate": 1.0,
+      "passed_case_count": 3,
+      "reasons": [
+        "Node owns execution or final authority; autonomous behavior should not bypass deterministic control."
+      ],
+      "recommendation": "do_not_autonomize",
+      "safety_cap": "no_autonomous_action",
+      "score": 21,
+      "signals": [
+        "failure_recovery",
+        "write_approval"
+      ]
+    },
+    "planner_choose_tool_node": {
+      "case_count": 7,
+      "completed_case_count": 7,
+      "complexity_pressure": 20,
+      "deterministic_brittleness": 16,
+      "expectation_matched": true,
+      "expected_recommendations": [
+        "guarded_pilot"
+      ],
+      "guardability": 20,
+      "llm_lift_signal": 25,
+      "node": "planner_choose_tool_node",
+      "pass_rate": 1.0,
+      "passed_case_count": 7,
+      "reasons": [
+        "Write or approval behavior requires a guarded pilot instead of direct autonomy.",
+        "Scenario set has high complexity pressure.",
+        "Deterministic path shows brittleness or shallow assertion pressure.",
+        "LLM lift signal is present through mocked or opt-in live diagnostics.",
+        "Bounded proposer or validator seam can constrain model output."
+      ],
+      "recommendation": "guarded_pilot",
+      "safety_cap": "approval_required",
+      "score": 81,
+      "signals": [
+        "candidate_conflict",
+        "cross_source",
+        "failure_recovery",
+        "llm_choice",
+        "mocked_autonomous",
+        "replan",
+        "schema_validation",
+        "validation_rejection",
+        "write_approval"
+      ]
+    },
+    "planner_decision_node": {
+      "case_count": 7,
+      "completed_case_count": 7,
+      "complexity_pressure": 30,
+      "deterministic_brittleness": 21,
+      "expectation_matched": null,
+      "expected_recommendations": [],
+      "guardability": 20,
+      "llm_lift_signal": 15,
+      "node": "planner_decision_node",
+      "pass_rate": 1.0,
+      "passed_case_count": 7,
+      "reasons": [
+        "Scenario set has high complexity pressure.",
+        "Deterministic path shows brittleness or shallow assertion pressure.",
+        "LLM lift signal is present through mocked or opt-in live diagnostics.",
+        "Bounded proposer or validator seam can constrain model output.",
+        "Read-only, bounded node is suitable for an autonomy pilot."
+      ],
+      "recommendation": "upgrade_candidate",
+      "safety_cap": "read_only",
+      "score": 86,
+      "signals": [
+        "conditional",
+        "cross_entity",
+        "dependency_blocked",
+        "fail_closed",
+        "missing_entity",
+        "mocked_autonomous",
+        "multi_step",
+        "schema_validation",
+        "unsafe_mutation"
+      ]
+    },
+    "requirement_ledger_node": {
+      "case_count": 5,
+      "completed_case_count": 5,
+      "complexity_pressure": 30,
+      "deterministic_brittleness": 8,
+      "expectation_matched": null,
+      "expected_recommendations": [],
+      "guardability": 15,
+      "llm_lift_signal": 0,
+      "node": "requirement_ledger_node",
+      "pass_rate": 1.0,
+      "passed_case_count": 5,
+      "reasons": [
+        "Node is a deterministic validation/projection layer; use score as observation signal only.",
+        "Scenario set has high complexity pressure."
+      ],
+      "recommendation": "observe",
+      "safety_cap": "deterministic_only",
+      "score": 53,
+      "signals": [
+        "conditional",
+        "cross_entity",
+        "dependency_blocked",
+        "missing_entity",
+        "multi_step",
+        "write_approval"
+      ]
+    },
+    "response_document_node": {
+      "case_count": 10,
+      "completed_case_count": 10,
+      "complexity_pressure": 20,
+      "deterministic_brittleness": 21,
+      "expectation_matched": null,
+      "expected_recommendations": [],
+      "guardability": 12,
+      "llm_lift_signal": 0,
+      "node": "response_document_node",
+      "pass_rate": 1.0,
+      "passed_case_count": 10,
+      "reasons": [
+        "Node owns execution or final authority; autonomous behavior should not bypass deterministic control.",
+        "Scenario set has high complexity pressure.",
+        "Deterministic path shows brittleness or shallow assertion pressure."
+      ],
+      "recommendation": "do_not_autonomize",
+      "safety_cap": "no_autonomous_action",
+      "score": 53,
+      "signals": [
+        "cross_source",
+        "failure_recovery",
+        "formatting",
+        "missing_entity",
+        "replan",
+        "stale_evidence",
+        "write_approval"
+      ]
+    },
+    "satisfaction_node": {
+      "case_count": 9,
+      "completed_case_count": 9,
+      "complexity_pressure": 30,
+      "deterministic_brittleness": 21,
+      "expectation_matched": null,
+      "expected_recommendations": [],
+      "guardability": 16,
+      "llm_lift_signal": 0,
+      "node": "satisfaction_node",
+      "pass_rate": 1.0,
+      "passed_case_count": 9,
+      "reasons": [
+        "Node is a deterministic validation/projection layer; use score as observation signal only.",
+        "Scenario set has high complexity pressure.",
+        "Deterministic path shows brittleness or shallow assertion pressure."
+      ],
+      "recommendation": "observe",
+      "safety_cap": "deterministic_only",
+      "score": 67,
+      "signals": [
+        "ambiguity",
+        "conditional",
+        "cross_source",
+        "failure_recovery",
+        "missing_entity",
+        "multi_step",
+        "replan",
+        "stale_evidence",
+        "write_approval"
+      ]
+    },
+    "semantic_intake_node": {
+      "case_count": 10,
+      "completed_case_count": 10,
+      "complexity_pressure": 30,
+      "deterministic_brittleness": 12,
+      "expectation_matched": true,
+      "expected_recommendations": [
+        "upgrade_candidate"
+      ],
+      "guardability": 20,
+      "llm_lift_signal": 15,
+      "node": "semantic_intake_node",
+      "pass_rate": 1.0,
+      "passed_case_count": 10,
+      "reasons": [
+        "Scenario set has high complexity pressure.",
+        "LLM lift signal is present through mocked or opt-in live diagnostics.",
+        "Bounded proposer or validator seam can constrain model output.",
+        "Read-only, bounded node is suitable for an autonomy pilot."
+      ],
+      "recommendation": "upgrade_candidate",
+      "safety_cap": "read_only",
+      "score": 77,
+      "signals": [
+        "ambiguity",
+        "conditional",
+        "cross_entity",
+        "cross_source",
+        "formatting",
+        "llm_repair",
+        "missing_entity",
+        "multi_intent",
+        "multi_step",
+        "schema_validation",
+        "write_approval"
+      ]
+    },
+    "tool_execution_node": {
+      "case_count": 9,
+      "completed_case_count": 9,
+      "complexity_pressure": 25,
+      "deterministic_brittleness": 17,
+      "expectation_matched": true,
+      "expected_recommendations": [
+        "do_not_autonomize"
+      ],
+      "guardability": 10,
+      "llm_lift_signal": 0,
+      "node": "tool_execution_node",
+      "pass_rate": 1.0,
+      "passed_case_count": 9,
+      "reasons": [
+        "Node owns execution or final authority; autonomous behavior should not bypass deterministic control.",
+        "Scenario set has high complexity pressure.",
+        "Deterministic path shows brittleness or shallow assertion pressure."
+      ],
+      "recommendation": "do_not_autonomize",
+      "safety_cap": "no_autonomous_action",
+      "score": 52,
+      "signals": [
+        "cross_source",
+        "failure_recovery",
+        "missing_entity",
+        "parallel",
+        "schema_validation",
+        "write_approval"
+      ]
+    },
+    "tool_retrieval_node": {
+      "case_count": 7,
+      "completed_case_count": 7,
+      "complexity_pressure": 30,
+      "deterministic_brittleness": 4,
+      "expectation_matched": null,
+      "expected_recommendations": [],
+      "guardability": 18,
+      "llm_lift_signal": 23,
+      "node": "tool_retrieval_node",
+      "pass_rate": 1.0,
+      "passed_case_count": 7,
+      "reasons": [
+        "Scenario set has high complexity pressure.",
+        "LLM lift signal is present through mocked or opt-in live diagnostics.",
+        "Bounded proposer or validator seam can constrain model output.",
+        "Read-only, bounded node is suitable for an autonomy pilot."
+      ],
+      "recommendation": "upgrade_candidate",
+      "safety_cap": "read_only",
+      "score": 75,
+      "signals": [
+        "candidate_conflict",
+        "conditional",
+        "cross_entity",
+        "cross_source",
+        "failure_recovery",
+        "llm_reranker",
+        "multi_step",
+        "write_approval"
+      ]
+    }
+  },
+  "score_version": 1,
+  "selected_node": "all",
+  "summary": {
+    "do_not_autonomize": [
+      "approval_node",
+      "finalize_node",
+      "response_document_node",
+      "tool_execution_node"
+    ],
+    "guarded_pilots": [
+      "planner_choose_tool_node"
+    ],
+    "recommendation_counts": {
+      "do_not_autonomize": 4,
+      "guarded_pilot": 1,
+      "observe": 3,
+      "upgrade_candidate": 3
+    },
+    "upgrade_candidates": [
+      "planner_decision_node",
+      "semantic_intake_node",
+      "tool_retrieval_node"
+    ]
+  }
+}

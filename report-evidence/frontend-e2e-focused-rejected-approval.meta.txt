@@ -1,0 +1,5 @@
+command=npx playwright test e2e/specs/final-response-quality.spec.js --project=chromium --grep "rejected approval closes actions"
+exit_code=0
+started=2026-06-20T13:26:20.6581845+08:00
+finished=2026-06-20T13:26:30.2125827+08:00
+duration_seconds=9.554

@@ -4,186 +4,170 @@ import MachineUtilizationChart from '../components/features/charts/MachineUtiliz
 import JobTypeMixChart from '../components/features/charts/JobTypeMixChart'
 import DowntimeAnalysisChart from '../components/features/charts/DowntimeAnalysisChart'
 import PageHeader from '../components/shared/PageHeader'
-import { reportsApi } from '../services/api'
-import { unwrap } from '../services/normalizers'
+import { productionAnalyticsApi, toList, toData, apiErrorMessage } from '../services/api'
 import logger from '../services/logger'
 
 const DATE_RANGES = [
-    { label: 'Last 24h', days: 1 },
-    { label: 'Last 7d', days: 7 },
-    { label: 'Last 30d', days: 30 },
+  { label: 'Last 24h', days: 1 },
+  { label: 'Last 7d', days: 7 },
+  { label: 'Last 30d', days: 30 },
 ]
 
 const toIso = (d) => d.toISOString()
+const num = (value) => {
+  const n = Number(value)
+  return Number.isFinite(n) ? n : 0
+}
 
 const ProductionData = () => {
-    const [rangeIdx, setRangeIdx] = useState(1)
-    const [outputData, setOutputData] = useState(null)
-    const [utilizationData, setUtilData] = useState(null)
-    const [jobTypeData, setJobTypeData] = useState(null)
-    const [downtimeData, setDowntimeData] = useState(null)
-    const [loading, setLoading] = useState(false)
-    const [fetchError, setFetchError] = useState('')
+  const [rangeIdx, setRangeIdx] = useState(1)
+  const [summary, setSummary] = useState(null)
+  const [outputData, setOutputData] = useState([])
+  const [utilizationData, setUtilData] = useState([])
+  const [jobTypeData, setJobTypeData] = useState([])
+  const [downtimeData, setDowntimeData] = useState([])
+  const [loading, setLoading] = useState(false)
+  const [fetchError, setFetchError] = useState('')
 
-    const fetchAll = useCallback(async () => {
-        setLoading(true); setFetchError('')
-        const now = new Date()
-        const start = new Date(now); start.setDate(now.getDate() - DATE_RANGES[rangeIdx].days)
-        const params = { start: toIso(start), end: toIso(now) }
-        try {
-            const [out, util, jobs, down] = await Promise.allSettled([
-                reportsApi.productionOutput(params),
-                reportsApi.machineUtilization(params),
-                reportsApi.jobCompletion(params),
-                reportsApi.bottlenecks(params),
-            ])
-            if (out.status === 'fulfilled') setOutputData(unwrap(out.value) ?? out.value)
-            if (util.status === 'fulfilled') setUtilData(unwrap(util.value) ?? util.value)
-            if (jobs.status === 'fulfilled') setJobTypeData(unwrap(jobs.value) ?? jobs.value)
-            if (down.status === 'fulfilled') setDowntimeData(unwrap(down.value) ?? down.value)
+  const fetchAll = useCallback(async () => {
+    setLoading(true)
+    setFetchError('')
+    const now = new Date()
+    const start = new Date(now)
+    start.setDate(now.getDate() - DATE_RANGES[rangeIdx].days)
+    const params = { start: toIso(start), end: toIso(now) }
 
-            const names = ['productionOutput', 'machineUtilization', 'jobCompletion', 'bottlenecks']
-                ;[out, util, jobs, down].forEach((r, i) => {
-                    if (r.status === 'rejected') {
-                        logger.warn(`ProductionData: ${names[i]} unavailable`, { message: r.reason?.message })
-                    }
-                })
+    try {
+      const [summaryRes, out, util, jobs, down] = await Promise.allSettled([
+        productionAnalyticsApi.summary(params),
+        productionAnalyticsApi.output(params),
+        productionAnalyticsApi.machineUtilization(params),
+        productionAnalyticsApi.jobCompletion(params),
+        productionAnalyticsApi.downtime(params),
+      ])
 
-            const allFailed = [out, util, jobs, down].every(r => r.status === 'rejected')
-            if (allFailed) setFetchError('All chart data failed to load. Showing demo data.')
-        } catch (err) {
-            logger.error('Unexpected error loading production data', err)
-            setFetchError('Some chart data could not be loaded from server.')
-        } finally { setLoading(false) }
-    }, [rangeIdx])
+      if (summaryRes.status === 'fulfilled') setSummary(toData(summaryRes.value) || {})
+      else setSummary(null)
 
-    useEffect(() => { fetchAll() }, [fetchAll])
+      if (out.status === 'fulfilled') setOutputData(toList(out.value))
+      else setOutputData([])
 
-    // Summary stats derived from API data (fallback to demo values)
-    // Accept multiple field name variants from backend
-    const pf = (d, keys, fb) => { if (!d) return fb; for (const k of keys) if (d[k] != null) return Number(d[k]); return fb }
-    const totalOutput = pf(outputData, ['total_units', 'totalUnits', 'units', 'total'], 24180)
-    const outputChange = pf(outputData, ['change_pct', 'changePct', 'change', 'pct_change'], 5.2)
-    const utilPct = pf(utilizationData, ['avg_pct', 'avgPct', 'average_pct', 'avg', 'average'], 85.2)
-    const utilChange = pf(utilizationData, ['change_pct', 'changePct', 'change'], -1.8)
-    const totalJobs = pf(jobTypeData, ['total_jobs', 'totalJobs', 'total', 'count'], 1240)
-    const jobsChange = pf(jobTypeData, ['change_pct', 'changePct', 'change'], 2.1)
-    // Bottleneck API returns array — calculate a summary total queue/utilization
-    const _dtArr = Array.isArray(downtimeData) ? downtimeData
-        : Array.isArray(downtimeData?.data) ? downtimeData.data : null
-    const _dtTotal = _dtArr ? _dtArr.reduce((s, d) => s + Number(d.queue_count ?? d.total_hours ?? d.hours ?? 0), 0) : null
-    const totalDowntime = pf(downtimeData, ['total_hours', 'totalHours', 'total_downtime', 'hours', 'downtime_hours'], _dtTotal ?? 18.5)
-    const downtimeChange = pf(downtimeData, ['change_pct', 'changePct', 'change'], 8.0)
+      if (util.status === 'fulfilled') setUtilData(toList(util.value))
+      else setUtilData([])
 
-    return (
-        <div className="flex-1 p-6 overflow-y-auto">
-            <PageHeader title="Production Data Visualization" subtitle="Real-time analytics and performance metrics.">
-                <button
-                    onClick={fetchAll}
-                    disabled={loading}
-                    className="flex items-center gap-2 h-10 px-4 bg-transparent border border-hairline text-ink text-sm font-bold rounded-lg hover:bg-surface-2 transition-colors disabled:opacity-50"
-                >
-                    <span className={`material-symbols-outlined text-lg ${loading ? 'animate-spin' : ''}`}>refresh</span>
-                    <span>Refresh</span>
-                </button>
-                <button
-                    className="flex items-center gap-2 h-10 px-4 bg-primary text-white text-sm font-bold rounded-lg hover:bg-primary/90 transition-colors"
-                >
-                    <span className="material-symbols-outlined text-lg">download</span>
-                    <span>Export</span>
-                </button>
-            </PageHeader>
+      if (jobs.status === 'fulfilled') setJobTypeData(toList(jobs.value))
+      else setJobTypeData([])
 
-            {fetchError && (
-                <div className="mb-4 flex items-center gap-2 px-4 py-2 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-700 rounded-xl text-sm text-amber-700 dark:text-amber-400">
-                    <span className="material-symbols-outlined text-base">warning</span>{fetchError} Showing demo data.
-                </div>
-            )}
+      if (down.status === 'fulfilled') setDowntimeData(toList(down.value))
+      else setDowntimeData([])
 
-            {/* Filters */}
-            <div className="flex flex-wrap gap-2 mb-4">
-                {/* Date range toggle */}
-                <div className="flex h-8 items-center gap-0.5 rounded-lg bg-surface-1 p-0.5">
-                    {DATE_RANGES.map((r, i) => (
-                        <button key={i} onClick={() => setRangeIdx(i)}
-                            className={`px-3 h-full rounded-md text-xs font-medium transition-colors ${rangeIdx === i ? 'bg-surface-1 text-ink ' : 'text-ink-subtle hover:text-ink'}`}>
-                            {r.label}
-                        </button>
-                    ))}
-                </div>
-                {['Machine Type', 'Shift Period', 'Status'].map((f) => (
-                    <button key={f} className="flex h-8 shrink-0 items-center justify-center gap-x-1.5 rounded-lg bg-surface-1 pl-3 pr-1.5 hover:bg-surface-2 transition-colors">
-                        <p className="text-ink text-xs font-medium">{f}</p>
-                        <span className="material-symbols-outlined text-sm text-ink-subtle">expand_more</span>
-                    </button>
-                ))}
-            </div>
+      const names = ['summary', 'productionOutput', 'machineUtilization', 'jobCompletion', 'downtime']
+      ;[summaryRes, out, util, jobs, down].forEach((r, i) => {
+        if (r.status === 'rejected') {
+          logger.warn(`ProductionData: ${names[i]} unavailable`, { message: r.reason?.message })
+        }
+      })
 
-            {/* Charts */}
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                <ChartCard
-                    title="Production Output vs. Time"
-                    value={`${totalOutput.toLocaleString()} Units`}
-                    sub={DATE_RANGES[rangeIdx].label}
-                    change={outputChange}
-                    loading={loading}
-                >
-                    <ProductionOutputChart data={outputData} />
-                </ChartCard>
+      const allFailed = [summaryRes, out, util, jobs, down].every(r => r.status === 'rejected')
+      if (allFailed) setFetchError('Production analytics could not be loaded.')
+    } catch (err) {
+      logger.error('Unexpected error loading production analytics', err)
+      setFetchError(apiErrorMessage(err, 'Production analytics could not be loaded.'))
+    } finally {
+      setLoading(false)
+    }
+  }, [rangeIdx])
 
-                <ChartCard
-                    title="Machine Utilization"
-                    value={`${utilPct}%`}
-                    sub={DATE_RANGES[rangeIdx].label}
-                    change={utilChange}
-                    loading={loading}
-                >
-                    <MachineUtilizationChart data={utilizationData} />
-                </ChartCard>
+  useEffect(() => { fetchAll() }, [fetchAll])
 
-                <ChartCard
-                    title="Job Type Mix"
-                    value={`${totalJobs.toLocaleString()} Jobs`}
-                    sub={DATE_RANGES[rangeIdx].label}
-                    change={jobsChange}
-                    loading={loading}
-                >
-                    <JobTypeMixChart data={jobTypeData} />
-                </ChartCard>
+  const totalOutput = num(summary?.total_output)
+  const utilPct = num(summary?.avg_utilization_pct)
+  const totalJobs = num(summary?.total_jobs)
+  const totalDowntime = num(summary?.downtime_hours)
 
-                <ChartCard
-                    title="Downtime Cause Analysis"
-                    value={`${totalDowntime} Hours`}
-                    sub={DATE_RANGES[rangeIdx].label}
-                    change={downtimeChange}
-                    loading={loading}
-                >
-                    <DowntimeAnalysisChart data={downtimeData} />
-                </ChartCard>
-            </div>
+  return (
+    <div className="flex-1 p-6 overflow-y-auto">
+      <PageHeader title="Production Data Visualization" subtitle="Real production analytics from logged production data.">
+        <button
+          onClick={fetchAll}
+          disabled={loading}
+          className="flex items-center gap-2 h-10 px-4 bg-transparent border border-hairline text-ink text-sm font-bold rounded-lg hover:bg-surface-2 transition-colors disabled:opacity-50"
+        >
+          <span className={`material-symbols-outlined text-lg ${loading ? 'animate-spin' : ''}`}>refresh</span>
+          <span>Refresh</span>
+        </button>
+      </PageHeader>
+
+      {fetchError && (
+        <div className="mb-4 flex items-center gap-2 px-4 py-2 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-700 rounded-lg text-sm text-amber-700 dark:text-amber-400">
+          <span className="material-symbols-outlined text-base">warning</span>{fetchError}
         </div>
-    )
+      )}
+
+      <div className="flex flex-wrap gap-2 mb-4">
+        <div className="flex h-8 items-center gap-0.5 rounded-lg bg-surface-1 p-0.5">
+          {DATE_RANGES.map((r, i) => (
+            <button
+              key={i}
+              onClick={() => setRangeIdx(i)}
+              className={`px-3 h-full rounded-md text-xs font-medium transition-colors ${rangeIdx === i ? 'bg-surface-2 text-ink' : 'text-ink-subtle hover:text-ink'}`}
+            >
+              {r.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <ChartCard
+          title="Production Output vs. Time"
+          value={`${totalOutput.toLocaleString()} Units`}
+          sub={DATE_RANGES[rangeIdx].label}
+          loading={loading}
+        >
+          <ProductionOutputChart data={outputData} />
+        </ChartCard>
+
+        <ChartCard
+          title="Machine Utilization"
+          value={`${utilPct.toFixed(1)}%`}
+          sub={DATE_RANGES[rangeIdx].label}
+          loading={loading}
+        >
+          <MachineUtilizationChart data={utilizationData} />
+        </ChartCard>
+
+        <ChartCard
+          title="Job Completion"
+          value={`${totalJobs.toLocaleString()} Jobs`}
+          sub={DATE_RANGES[rangeIdx].label}
+          loading={loading}
+        >
+          <JobTypeMixChart data={jobTypeData} />
+        </ChartCard>
+
+        <ChartCard
+          title="Downtime Cause Analysis"
+          value={`${totalDowntime.toFixed(1)} Hours`}
+          sub={DATE_RANGES[rangeIdx].label}
+          loading={loading}
+        >
+          <DowntimeAnalysisChart data={downtimeData} />
+        </ChartCard>
+      </div>
+    </div>
+  )
 }
 
-const ChartCard = ({ title, value, sub, change, loading, children }) => {
-    const positive = change >= 0
-    return (
-        <div className="flex flex-col gap-1.5 rounded-xl border border-hairline p-4 bg-surface-1">
-            <p className="text-ink text-sm font-medium leading-normal">{title}</p>
-            <p className="text-ink tracking-light text-xl font-bold leading-tight truncate">
-                {loading ? <span className="inline-block w-24 h-6 bg-surface-1 rounded animate-pulse" /> : value}
-            </p>
-            <div className="flex gap-1">
-                <p className="text-ink-subtle text-xs font-normal leading-normal">{sub}</p>
-                {change != null && !loading && (
-                    <p className={`text-xs font-medium leading-normal ${positive ? 'text-green-500 ' : 'text-red-500 '}`}>
-                        {positive ? '+' : ''}{change}%
-                    </p>
-                )}
-            </div>
-            {children}
-        </div>
-    )
-}
+const ChartCard = ({ title, value, sub, loading, children }) => (
+  <div className="flex flex-col gap-1.5 rounded-lg border border-hairline p-4 bg-surface-1">
+    <p className="text-ink text-sm font-medium leading-normal">{title}</p>
+    <p className="text-ink tracking-light text-xl font-bold leading-tight truncate">
+      {loading ? <span className="inline-block w-24 h-6 bg-surface-2 rounded animate-pulse" /> : value}
+    </p>
+    <p className="text-ink-subtle text-xs font-normal leading-normal">{sub}</p>
+    {children}
+  </div>
+)
 
 export default ProductionData

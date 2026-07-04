@@ -10,7 +10,6 @@ const Jobs = lazy(() => import('./pages/Jobs'))
 const Scheduling = lazy(() => import('./pages/Scheduling'))
 const ShortageResolution = lazy(() => import('./pages/ShortageResolution'))
 const ProductionData = lazy(() => import('./pages/ProductionData'))
-const PredictiveAnalysis = lazy(() => import('./pages/PredictiveAnalysis'))
 const Reports = lazy(() => import('./pages/Reports'))
 const MachineResources = lazy(() => import('./pages/MachineResources'))
 const StorageInventory = lazy(() => import('./pages/StorageInventory'))
@@ -79,7 +78,7 @@ function App() {
                                 <Route path="/scheduling/shortage-resolution" element={<ShortageResolution />} />
                                 <Route path="/job-scheduling" element={<Navigate to="/scheduling" replace />} />
                                 <Route path="/production-data" element={<ProductionData />} />
-                                <Route path="/predictive-analysis" element={<PredictiveAnalysis />} />
+                                <Route path="/predictive-analysis" element={<Navigate to="/" replace />} />
                                 <Route path="/reports" element={<Reports />} />
                                 <Route path="/machine-resources" element={<MachineResources />} />
                                 <Route path="/storage-inventory" element={<StorageInventory />} />

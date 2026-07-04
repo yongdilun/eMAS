@@ -35,7 +35,7 @@ const ACTIVITY_TIMELINE_ENABLED = !['0', 'false', 'off'].includes(
 const STREAM_BUFFER_MS = Number(import.meta.env?.VITE_FACTORY_AGENT_STREAM_BUFFER_MS || 40)
 const PROGRESS_STAGE_MIN_MS = Number(import.meta.env?.VITE_FACTORY_AGENT_PROGRESS_STAGE_MIN_MS || 700)
 const STARTER_PROMPTS = Object.freeze([
-  'Read JOB-SEED-005. If it has a product, read the product too.',
+  'Read a job by ID. If it has a product, read the product too.',
   'Change planned low-priority jobs to medium priority, then show the id and status of the updated jobs.',
   'According to the LOTO procedure, what steps must workers complete before beginning service or maintenance?',
 ])

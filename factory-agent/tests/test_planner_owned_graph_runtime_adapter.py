@@ -309,6 +309,101 @@ async def test_phase10_graph_failed_tool_output_is_not_planner_no_action(db_sess
 
 
 @pytest.mark.asyncio
+async def test_replan_limit_failed_tool_output_blocks_session_not_failed(db_session):
+    service = _service()
+    session_id = "phase-replan-limit-tool-failed"
+    summary = "I could not verify the requested evidence after bounded retries."
+    replan_spine = {
+        "attempt_count": 5,
+        "max_attempts": 5,
+        "replan_limit_reached": True,
+        "failed_tool_calls": [
+            {
+                "tool_name": "get__machines_{id}",
+                "reason": "tool_error",
+                "attempt": 5,
+            }
+        ],
+    }
+    sess = Session(
+        session_id=session_id,
+        user_id="u1",
+        status="EXECUTING",
+        current_intent="Show status for machine M-CNC-01 only.",
+        llm_call_count=0,
+    )
+    db_session.add(sess)
+    db_session.add(
+        Message(
+            message_id="phase-replan-limit-tool-failed-user",
+            session_id=session_id,
+            role="user",
+            content="Show status for machine M-CNC-01 only.",
+            mode="normal",
+        )
+    )
+    await db_session.commit()
+
+    await service._persist_plan(
+        db=db_session,
+        sess=sess,
+        draft=PlanDraft(
+            plan_explanation=summary,
+            risk_summary="The planner-owned graph finished with a safe failure.",
+            steps=[],
+        ),
+        tools_by_name={},
+        backend_used="planner_owned_agent_graph",
+        kind="execution",
+        status="FAILED",
+        intent="Show status for machine M-CNC-01 only.",
+        context_to_keep={
+            "intent_contract": {
+                "response_document_context": {
+                    "diagnostics": {
+                        "summary": summary,
+                        "replan_limit_reached": True,
+                        "replan_spine": replan_spine,
+                    }
+                },
+                "replan_spine": replan_spine,
+            },
+            "planner_owned_agent_graph": {
+                "response_document_state": "failed",
+                "response_document_context": {
+                    "diagnostics": {
+                        "summary": summary,
+                        "replan_limit_reached": True,
+                        "replan_spine": replan_spine,
+                    }
+                },
+                "replan_spine": replan_spine,
+            },
+        },
+        tool_outputs=[
+            {
+                "tool_name": "get__machines_{id}",
+                "args": {"id": "M-CNC-01", "fields": "status"},
+                "status": "FAILED",
+                "summary": "Previous read timed out",
+                "result": {"error": {"code": "tool_timeout", "message": "Previous read timed out"}},
+            }
+        ],
+    )
+
+    refreshed = await db_session.get(Session, session_id)
+    plan = (
+        await db_session.execute(select(Plan).where(Plan.session_id == session_id))
+    ).scalars().one()
+
+    assert plan.status == "FAILED"
+    assert refreshed.status == "BLOCKED"
+    assert refreshed.error == summary
+    assert refreshed.completed_at is None
+    assert refreshed.replan_context["planner_owned_agent_graph"]["replan_spine"]["replan_limit_reached"] is True
+
+
+@pytest.mark.asyncio
 async def test_reschedule_all_graph_result_waits_for_embedded_user_action(db_session):
     service = _service()
     session_id = "phase20-reschedule-all-waiting-user-action"

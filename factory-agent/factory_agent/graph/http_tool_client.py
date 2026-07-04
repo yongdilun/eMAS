@@ -6,6 +6,8 @@ import json
 import os
 import re
 import time
+from collections.abc import Mapping
+from email.message import Message
 from typing import Any
 from urllib.parse import quote
 
@@ -79,6 +81,48 @@ def _http_timeout_for_tool(settings: Settings, tool: ToolInfo) -> float:
     return timeout
 
 
+def _tool_declares_pdf_output(tool: ToolInfo) -> bool:
+    schema = tool.output_schema if isinstance(tool.output_schema, Mapping) else {}
+    content_types = schema.get("x-response-content-types")
+    if not isinstance(content_types, list):
+        return False
+    return any(str(item).split(";")[0].strip().lower() == "application/pdf" for item in content_types)
+
+
+def _response_media_type(resp: httpx.Response) -> str:
+    return str(resp.headers.get("content-type") or "").split(";")[0].strip().lower()
+
+
+def _filename_from_content_disposition(value: str | None, fallback: str) -> str:
+    if not value:
+        return fallback
+    message = Message()
+    message["Content-Disposition"] = value
+    filename = message.get_filename()
+    return str(filename or fallback)
+
+
+def _file_download_body(*, tool: ToolInfo, resp: httpx.Response) -> dict[str, Any]:
+    request_url = str(resp.request.url)
+    content_type = _response_media_type(resp) or "application/pdf"
+    filename = _filename_from_content_disposition(
+        resp.headers.get("content-disposition"),
+        f"{tool.name}.pdf",
+    )
+    title = "PDF report ready"
+    return {
+        "kind": "file_download",
+        "title": title,
+        "filename": filename,
+        "content_type": content_type,
+        "download_url": request_url,
+        "view_url": request_url,
+        "request_url": request_url,
+        "http_status": resp.status_code,
+        "summary": f"{filename} is ready to view or download.",
+    }
+
+
 async def execute_tool_http(
     settings: Settings,
     tool: ToolInfo,
@@ -147,6 +191,24 @@ async def execute_tool_http(
         }
 
     latency_ms = int((time.time() - start) * 1000)
+    media_type = _response_media_type(resp)
+    if media_type == "application/pdf" or (
+        resp.status_code < 400 and _tool_declares_pdf_output(tool) and not media_type.endswith("json")
+    ):
+        body = _file_download_body(tool=tool, resp=resp)
+        return {
+            "ok": resp.status_code < 400,
+            "http_status": resp.status_code,
+            "body": body,
+            "latency_ms": latency_ms,
+            "infrastructure_error": resp.status_code >= 500,
+            "request_url": str(resp.request.url),
+            "request_headers": {
+                "has_x_user_id": bool(resp.request.headers.get("X-User-Id")),
+                "has_x_user_role": bool(resp.request.headers.get("X-User-Role")),
+            },
+        }
+
     body: dict[str, Any] | None = None
     try:
         if resp.content:

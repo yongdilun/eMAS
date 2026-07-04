@@ -1,0 +1,4 @@
+command=npm run test:backend-oracles
+started=2026-06-20T15:52:43.7583067+08:00
+ended=2026-06-20T15:53:11.5800795+08:00
+exit_code=0

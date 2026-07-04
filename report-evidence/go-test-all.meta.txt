@@ -1,0 +1,4 @@
+command=go test ./... -timeout=30m
+started=2026-06-20T15:37:48.7286289+08:00
+ended=2026-06-20T15:52:32.1249416+08:00
+exit_code=0

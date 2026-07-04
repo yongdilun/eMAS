@@ -4,7 +4,7 @@ import UtilizationChart from '../components/features/machines/UtilizationChart'
 import AddMachineModal from '../components/features/machines/AddMachineModal'
 import RecordDowntimeModal from '../components/features/machines/RecordDowntimeModal'
 import PageHeader from '../components/shared/PageHeader'
-import { machinesApi, reportsApi, jobsApi, toList, toData, apiErrorMessage, apiErrorToastOptions } from '../services/api'
+import { machinesApi, productionAnalyticsApi, jobsApi, toList, toData, apiErrorMessage, apiErrorToastOptions } from '../services/api'
 import { normalizeMachine, normalizeMaintenanceAlert, debugResponse } from '../services/normalizers'
 import logger from '../services/logger'
 import { useToast } from '../context/ToastContext'
@@ -63,7 +63,7 @@ const MachineResources = () => {
     useEffect(() => {
         const fetchUtilization = async () => {
             try {
-                const data = await reportsApi.machineUtilization()
+                const data = await productionAnalyticsApi.machineUtilization()
                 const arr = Array.isArray(data) ? data : toList(toData(data) ?? data)
                 const hasRealData = arr?.some((r) => (r.total_minutes ?? 0) > 0 || (r.utilization_pct ?? r.utilization ?? r.pct ?? 0) > 0)
                 if (hasRealData && arr?.length > 0) {

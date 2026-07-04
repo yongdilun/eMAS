@@ -64,6 +64,16 @@ Expected current result: 81 passed.
 
 $env:FACTORY_AGENT_RUN_NODE_BENCHMARKS='1'; $env:FACTORY_AGENT_NODE_BENCHMARK_NODE='all'; Remove-Item Env:\FACTORY_AGENT_NODE_BENCHMARK_UPDATE_BASELINE -ErrorAction SilentlyContinue; python -m pytest "factory-agent\tests\benchmarks\test_planner_owned_node_benchmarks.py" -q
 
+Full node benchmark suite with advisory autonomy scorecard written to a repo-local temp report folder.
+The scorecard is advisory only and does not change benchmark pass/fail behavior.
+
+New-Item -ItemType Directory -Force ".tmp\node-benchmark-reports" | Out-Null; $env:FACTORY_AGENT_RUN_NODE_BENCHMARKS='1'; $env:FACTORY_AGENT_NODE_BENCHMARK_NODE='all'; $env:FACTORY_AGENT_NODE_BENCHMARK_SCORECARD='1'; $env:FACTORY_AGENT_NODE_BENCHMARK_REPORT_DIR=(Resolve-Path ".tmp\node-benchmark-reports").Path; Remove-Item Env:\FACTORY_AGENT_NODE_BENCHMARK_LIVE_LLM -ErrorAction SilentlyContinue; Remove-Item Env:\FACTORY_AGENT_NODE_BENCHMARK_UPDATE_BASELINE -ErrorAction SilentlyContinue; python -m pytest "factory-agent\tests\benchmarks\test_planner_owned_node_benchmarks.py" -q
+
+Opt-in live LLM node benchmark scorecard.
+Requires local/provider LLM env such as PLANNER_OPENAI_BASE_URL / OPENAI_BASE_URL / LLM_BASE_URL and API key env where applicable. Assertions remain structural, not exact prose.
+
+New-Item -ItemType Directory -Force ".tmp\node-benchmark-reports-live" | Out-Null; $env:FACTORY_AGENT_RUN_NODE_BENCHMARKS='1'; $env:FACTORY_AGENT_NODE_BENCHMARK_NODE='all'; $env:FACTORY_AGENT_NODE_BENCHMARK_SCORECARD='1'; $env:FACTORY_AGENT_NODE_BENCHMARK_LIVE_LLM='1'; $env:FACTORY_AGENT_NODE_BENCHMARK_REPORT_DIR=(Resolve-Path ".tmp\node-benchmark-reports-live").Path; Remove-Item Env:\FACTORY_AGENT_NODE_BENCHMARK_UPDATE_BASELINE -ErrorAction SilentlyContinue; python -m pytest "factory-agent\tests\benchmarks\test_planner_owned_node_benchmarks.py" -q
+
 Normal pytest skip guard.
 Expected current result: 81 skipped.
 
@@ -357,6 +367,9 @@ Remove benchmark env:
 Remove-Item Env:\FACTORY_AGENT_RUN_NODE_BENCHMARKS -ErrorAction SilentlyContinue
 Remove-Item Env:\FACTORY_AGENT_NODE_BENCHMARK_NODE -ErrorAction SilentlyContinue
 Remove-Item Env:\FACTORY_AGENT_NODE_BENCHMARK_UPDATE_BASELINE -ErrorAction SilentlyContinue
+Remove-Item Env:\FACTORY_AGENT_NODE_BENCHMARK_SCORECARD -ErrorAction SilentlyContinue
+Remove-Item Env:\FACTORY_AGENT_NODE_BENCHMARK_LIVE_LLM -ErrorAction SilentlyContinue
+Remove-Item Env:\FACTORY_AGENT_NODE_BENCHMARK_REPORT_DIR -ErrorAction SilentlyContinue
 
 Remove live/e2e env commonly set by this runbook:
 

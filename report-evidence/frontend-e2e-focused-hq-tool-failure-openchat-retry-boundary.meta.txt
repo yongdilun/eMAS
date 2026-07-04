@@ -1,0 +1,4 @@
+command=npx playwright test e2e/specs/full-stack-hard-query.spec.js --project=chromium-seeded --grep HQ-9-TOOL-FAILURE
+started=2026-06-20T14:56:10.3454846+08:00
+ended=2026-06-20T14:56:23.7495071+08:00
+exit_code=0

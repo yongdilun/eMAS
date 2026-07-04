@@ -288,6 +288,26 @@ function requestedFieldsData(value) {
   return Array.isArray(value) && value.length ? value.map((item) => safeText(item)).filter(Boolean).join(',') : undefined
 }
 
+function safeHref(value) {
+  const text = safeText(value)
+  if (!text) return ''
+  if (/^https?:\/\//i.test(text) || text.startsWith('/')) return text
+  return ''
+}
+
+function attachmentHref(value) {
+  const href = safeHref(value)
+  if (!href) return ''
+  try {
+    const url = new URL(href, window.location.href)
+    url.searchParams.set('download', '1')
+    return url.toString()
+  } catch {
+    const separator = href.includes('?') ? '&' : '?'
+    return `${href}${separator}download=1`
+  }
+}
+
 function CompactCard({
   title,
   children,
@@ -2183,6 +2203,53 @@ function StatusResultBlock({ block, documentMessage }) {
   )
 }
 
+function FileDownloadBlock({ block }) {
+  const filename = safeText(block.filename) || 'report.pdf'
+  const contentType = safeText(block.content_type) || 'application/pdf'
+  const downloadUrl = safeHref(block.download_url)
+  const viewUrl = safeHref(block.view_url) || downloadUrl
+  const attachmentUrl = attachmentHref(downloadUrl)
+  const summary = safeText(block.summary) || 'The PDF is ready to view or download.'
+
+  return (
+    <CompactCard title={block.title || 'PDF report ready'} blockType="file_download" blockId={block.id} contract="file_download_v1">
+      <div className="mt-3 flex items-start gap-3 rounded-md bg-surface-2 px-3 py-3">
+        <span className="material-symbols-outlined text-2xl text-primary">picture_as_pdf</span>
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-sm font-semibold text-ink">{filename}</p>
+          <p className="mt-1 text-xs text-ink-muted">{contentType}</p>
+          <p className="mt-2 text-sm text-ink">{summary}</p>
+          <div className="mt-3 flex flex-wrap gap-2">
+            {viewUrl ? (
+              <a
+                href={viewUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex h-9 items-center gap-1.5 rounded-md border border-hairline bg-surface-1 px-3 text-xs font-semibold text-ink hover:bg-surface-2"
+              >
+                <span className="material-symbols-outlined text-base">open_in_new</span>
+                View PDF
+              </a>
+            ) : null}
+            {attachmentUrl ? (
+              <a
+                href={attachmentUrl}
+                download={filename}
+                data-response-file-download=""
+                data-download-url={attachmentUrl}
+                className="inline-flex h-9 items-center gap-1.5 rounded-md bg-primary px-3 text-xs font-semibold text-white hover:bg-primary/90"
+              >
+                <span className="material-symbols-outlined text-base">download</span>
+                Download PDF
+              </a>
+            ) : null}
+          </div>
+        </div>
+      </div>
+    </CompactCard>
+  )
+}
+
 function DiagnosticBlock({ block }) {
   const technicalDetails = block.technical_details && typeof block.technical_details === 'object'
     ? block.technical_details
@@ -2244,6 +2311,7 @@ function renderBlock(block, props) {
   if (block.type === 'status_result') return <StatusResultBlock key={block.id} block={block} documentMessage={props.documentMessage} />
   if (block.type === 'record_preview') return <RecordPreviewBlock key={block.id} block={block} />
   if (block.type === 'safety_notice') return <SafetyNoticeBlock key={block.id} block={block} />
+  if (block.type === 'file_download') return <FileDownloadBlock key={block.id} block={block} />
   if (block.type === 'knowledge_answer') return <KnowledgeAnswerBlock key={block.id} block={block} {...props} />
   if (block.type === 'source_list') return <SourceListBlock key={block.id} block={block} onOpenSource={props.onOpenSource} />
   if (block.type === 'warning' || block.type === 'diagnostic') return <DiagnosticBlock key={block.id} block={block} />

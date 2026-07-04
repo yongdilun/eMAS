@@ -95,9 +95,14 @@ def _tool_metadata_tokens(tool: ToolInfo) -> set[str]:
 def _collection_entity_tokens(tools: list[ToolInfo]) -> set[str]:
     by_endpoint = {(tool.method, (tool.endpoint or "").rstrip("/")) for tool in tools}
     entities: set[str] = set()
+    first_segment_counts: dict[str, int] = {}
 
     for tool in tools:
         parts = [part for part in (tool.endpoint or "").strip("/").split("/") if part]
+        if parts and not _PATH_PARAM_RE.match(parts[0]):
+            root = normalize_token(parts[0])
+            if root:
+                first_segment_counts[root] = first_segment_counts.get(root, 0) + 1
         for index, part in enumerate(parts[:-1]):
             if _PATH_PARAM_RE.match(parts[index + 1]):
                 entities.update(tokenize(part))
@@ -114,6 +119,10 @@ def _collection_entity_tokens(tools: list[ToolInfo]) -> set[str]:
         )
         if has_collection_read and (has_collection_write or has_member_read or has_member_write):
             entities.update(tokenize(parts[0]))
+
+    for root, count in first_segment_counts.items():
+        if count >= 3:
+            entities.add(root)
 
     return entities
 

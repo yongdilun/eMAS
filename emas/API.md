@@ -926,82 +926,141 @@ Record a maintenance event.
 
 ## Reports & Analytics
 
-Reports accept optional date range:
+Report endpoints generate PDFs only. They accept optional filters:
 
 | Query | Type | Description |
 |-------|------|-------------|
 | `start` | `string` | RFC3339 start date (default: 30 days ago) |
 | `end` | `string` | RFC3339 end date (default: now) |
+| `machine_id` | `string` | Optional machine filter where supported |
+| `job_id` | `string` | Optional job filter where supported |
+| `product_id` | `string` | Optional product filter where supported |
+| `material_id` | `string` | Optional material filter for inventory trends |
 
 ---
 
 ### GET /reports/production-output
 
-Production per slot.
+Production output PDF.
 
-**Query** `machine_id` (optional): filter by machine.
-
-**Response (200)** `data`: `{ slot_id, machine_id, date, quantity_produced, quantity_scrap }[]`
+**Response (200)** `application/pdf`
 
 ---
 
 ### GET /reports/machine-utilization
 
-Machine utilization per step.
+Machine utilization PDF.
 
-**Response (200)** `data`: `{ machine_id, step_id, total_minutes, slot_count }[]`
+**Response (200)** `application/pdf`
 
 ---
 
 ### GET /reports/job-completion
 
-Job completion vs planned.
+Job completion PDF.
 
-**Response (200)** `data`: `{ job_id, slot_id, quantity_planned, quantity_produced }[]`
+**Response (200)** `application/pdf`
 
 ---
 
 ### GET /reports/inventory-trends
 
-Inventory transaction trends.
+Inventory trends PDF.
 
-**Query** `material_id` (optional): filter by material.
-
-**Response (200)** `data`: `{ material_id, date, net_qty, tx_count }[]`
+**Response (200)** `application/pdf`
 
 ---
 
 ### GET /reports/quality-trends
 
-Quality inspection trends.
+Quality trends PDF.
 
-**Response (200)** `data`: `{ date, pass_count, fail_count, defect_sum }[]`
+**Response (200)** `application/pdf`
 
 ---
 
 ### GET /reports/oee
 
-OEE trends.
+OEE trends PDF.
 
 **Query** `machine_id`, `shift` (optional).
 
-**Response (200)** `data`: `{ machine_id, shift_name, date, availability, performance, quality, oee }[]`
+**Response (200)** `application/pdf`
 
 ---
 
 ### GET /reports/bottlenecks
 
-Bottleneck forecast.
+Bottlenecks PDF.
 
-**Response (200)** `data`: `{ machine_id, step_id, queue_count, utilization, forecast }[]`
+**Response (200)** `application/pdf`
+
+---
+
+### GET /reports/downtime
+
+Downtime PDF.
+
+**Response (200)** `application/pdf`
 
 ---
 
 ### GET /reports/maintenance-efficiency
 
-Maintenance efficiency.
+Maintenance efficiency PDF.
 
-**Response (200)** `data`: `{ machine_id, planned_count, completed_count, avg_duration_minutes }[]`
+**Response (200)** `application/pdf`
+
+---
+
+PDF success responses include:
+
+- `Content-Type: application/pdf`
+- `Content-Disposition: inline; filename="<report-type>-<start>-<end>.pdf"`
+
+Validation failures return the standard JSON error envelope.
+
+---
+
+Production visualization uses JSON analytics endpoints, not report endpoints.
+
+### GET /production-analytics/summary
+
+Summary metrics for visualization cards.
+
+**Response (200)** `data`: `{ total_output, total_scrap, scrap_rate, downtime_hours, avg_utilization_pct, total_jobs, completed_jobs, in_progress_jobs, scheduled_jobs }`
+
+---
+
+### GET /production-analytics/output
+
+Production output rows.
+
+**Response (200)** `data`: `{ slot_id, machine_id, job_id, product_id, date, quantity_planned, quantity_produced, quantity_scrap }[]`
+
+---
+
+### GET /production-analytics/machine-utilization
+
+Machine utilization rows.
+
+**Response (200)** `data`: `{ machine_id, machine_name, total_minutes, downtime_minutes, utilization_pct, slot_count }[]`
+
+---
+
+### GET /production-analytics/job-completion
+
+Job completion rows.
+
+**Response (200)** `data`: `{ job_id, slot_id, product_id, quantity_planned, quantity_produced, completion_pct }[]`
+
+---
+
+### GET /production-analytics/downtime
+
+Downtime rows.
+
+**Response (200)** `data`: `{ machine_id, cause, date, duration_minutes, downtime_hours, occurrence_count }[]`
 
 ---
 

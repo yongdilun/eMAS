@@ -207,7 +207,10 @@
       "type": "boolean"
     }
   },
-  "required": []
+  "required": [],
+  "x-response-content-types": [
+    "application/json"
+  ]
 }
 `
 ---
@@ -425,7 +428,10 @@
       "type": "boolean"
     }
   },
-  "required": []
+  "required": [],
+  "x-response-content-types": [
+    "application/json"
+  ]
 }
 `
 ---
@@ -468,7 +474,10 @@
       "type": "boolean"
     }
   },
-  "required": []
+  "required": [],
+  "x-response-content-types": [
+    "application/json"
+  ]
 }
 `
 ---
@@ -532,7 +541,10 @@
     "success": {
       "type": "boolean"
     }
-  }
+  },
+  "x-response-content-types": [
+    "application/json"
+  ]
 }
 `
 ---
@@ -590,7 +602,10 @@
       "type": "boolean"
     }
   },
-  "required": []
+  "required": [],
+  "x-response-content-types": [
+    "application/json"
+  ]
 }
 `
 ---
@@ -647,7 +662,10 @@
     "success": {
       "type": "boolean"
     }
-  }
+  },
+  "x-response-content-types": [
+    "application/json"
+  ]
 }
 `
 ---
@@ -707,7 +725,10 @@
       "type": "boolean"
     }
   },
-  "required": []
+  "required": [],
+  "x-response-content-types": [
+    "application/json"
+  ]
 }
 `
 ---
@@ -781,7 +802,10 @@
       "type": "boolean"
     }
   },
-  "required": []
+  "required": [],
+  "x-response-content-types": [
+    "application/json"
+  ]
 }
 `
 ---
@@ -855,7 +879,10 @@
       "type": "boolean"
     }
   },
-  "required": []
+  "required": [],
+  "x-response-content-types": [
+    "application/json"
+  ]
 }
 `
 ---
@@ -913,7 +940,10 @@
     "success": {
       "type": "boolean"
     }
-  }
+  },
+  "x-response-content-types": [
+    "application/json"
+  ]
 }
 `
 ---
@@ -1010,7 +1040,10 @@
       "type": "boolean"
     }
   },
-  "required": []
+  "required": [],
+  "x-response-content-types": [
+    "application/json"
+  ]
 }
 `
 ---
@@ -1524,7 +1557,10 @@
       "type": "boolean"
     }
   },
-  "required": []
+  "required": [],
+  "x-response-content-types": [
+    "application/json"
+  ]
 }
 `
 ---
@@ -1568,7 +1604,10 @@
       "type": "boolean"
     }
   },
-  "required": []
+  "required": [],
+  "x-response-content-types": [
+    "application/json"
+  ]
 }
 `
 ---
@@ -1576,7 +1615,7 @@
 **Description**: Apply replenishment batch
 **Method**: POST
 **Endpoint**: /ai/scheduling/apply-replenishment-batch
-**Capability Tags**: ["ai", "scheduling", "apply", "replenishment", "batch", "create", "arrival", "arrive", "at", "inventory", "snapshot", "computed", "material", "id", "version", "note", "option", "type", "optiontype", "omit", "or", "replenish", "default", "expected", "schedule", "production", "planned", "subproduct", "stock", "product", "in", "quantity", "suggestion", "data", "error", "success"]
+**Capability Tags**: ["ai", "scheduling", "apply", "replenishment", "batch", "create", "arrival", "arrive", "at", "inventory", "snapshot", "computed", "material", "id", "version", "note", "option", "type", "optiontype", "omit", "or", "replenish", "default", "expected", "other", "value", "are", "ignored", "by", "quantity", "suggestion", "data", "error", "success"]
 **Requires Approval**: true
 **Side Effect Level**: HIGH
 **Read Only**: false
@@ -1631,7 +1670,7 @@
             "type": "string"
           },
           "option_type": {
-            "description": "OptionType: omit or \"replenish\" (default) = material expected arrival; \"schedule_production\" = planned subproduct stock (product_id in material_id).",
+            "description": "OptionType: omit or \"replenish\" (default) = material expected arrival. Other values are ignored by material apply.",
             "type": "string"
           },
           "quantity": {
@@ -1686,7 +1725,7 @@
             "type": "string"
           },
           "option_type": {
-            "description": "OptionType: omit or \"replenish\" (default) = material expected arrival; \"schedule_production\" = planned subproduct stock (product_id in material_id).",
+            "description": "OptionType: omit or \"replenish\" (default) = material expected arrival. Other values are ignored by material apply.",
             "type": "string"
           },
           "quantity": {
@@ -1751,7 +1790,7 @@
               "type": "string"
             },
             "option_type": {
-              "description": "OptionType: omit or \"replenish\" (default) = material expected arrival; \"schedule_production\" = planned subproduct stock (product_id in material_id).",
+              "description": "OptionType: omit or \"replenish\" (default) = material expected arrival. Other values are ignored by material apply.",
               "type": "string"
             },
             "quantity": {
@@ -1806,7 +1845,7 @@
               "type": "string"
             },
             "option_type": {
-              "description": "OptionType: omit or \"replenish\" (default) = material expected arrival; \"schedule_production\" = planned subproduct stock (product_id in material_id).",
+              "description": "OptionType: omit or \"replenish\" (default) = material expected arrival. Other values are ignored by material apply.",
               "type": "string"
             },
             "quantity": {
@@ -1845,7 +1884,10 @@
       "type": "boolean"
     }
   },
-  "required": []
+  "required": [],
+  "x-response-content-types": [
+    "application/json"
+  ]
 }
 `
 ---
@@ -1853,7 +1895,7 @@
 **Description**: Generate batch proposals
 **Method**: POST
 **Endpoint**: /ai/scheduling/batch-proposals
-**Capability Tags**: ["ai", "scheduling", "batch", "proposal", "create", "generate", "include", "inventory", "action", "job", "ids", "explicit", "if", "empty", "and", "scope", "set", "use", "order", "by", "edd", "epo", "fifo", "default", "all", "unscheduled", "with", "status", "planned", "scheduled", "no", "active", "slot", "data", "error", "success"]
+**Capability Tags**: ["ai", "scheduling", "batch", "proposal", "create", "generate", "include", "inventory", "action", "job", "ids", "explicit", "if", "empty", "and", "scope", "set", "use", "order", "by", "edd", "epo", "fifo", "readiness", "material", "priority", "weighted", "tardiness", "product", "deadline", "default", "all", "unscheduled", "with", "status", "planned", "scheduled", "no", "active", "slot", "data", "error", "success"]
 **Requires Approval**: true
 **Side Effect Level**: HIGH
 **Read Only**: false
@@ -1873,7 +1915,7 @@
       }
     },
     "order_by": {
-      "description": "\"edd\" | \"epo\" | \"fifo\" (default: \"epo\")",
+      "description": "\"edd\" | \"epo\" | \"fifo\" | \"readiness\" | \"material_priority\" | \"weighted_tardiness_material\" | \"product_deadline_fifo\" (default: \"product_deadline_fifo\")",
       "type": "string"
     },
     "scope": {
@@ -1903,7 +1945,7 @@
         }
       },
       "order_by": {
-        "description": "\"edd\" | \"epo\" | \"fifo\" (default: \"epo\")",
+        "description": "\"edd\" | \"epo\" | \"fifo\" | \"readiness\" | \"material_priority\" | \"weighted_tardiness_material\" | \"product_deadline_fifo\" (default: \"product_deadline_fifo\")",
         "type": "string"
       },
       "scope": {
@@ -1942,7 +1984,10 @@
       "type": "boolean"
     }
   },
-  "required": []
+  "required": [],
+  "x-response-content-types": [
+    "application/json"
+  ]
 }
 `
 ---
@@ -1997,7 +2042,10 @@
       "type": "boolean"
     }
   },
-  "required": []
+  "required": [],
+  "x-response-content-types": [
+    "application/json"
+  ]
 }
 `
 ---
@@ -2056,7 +2104,10 @@
       "type": "boolean"
     }
   },
-  "required": []
+  "required": [],
+  "x-response-content-types": [
+    "application/json"
+  ]
 }
 `
 ---
@@ -2121,7 +2172,10 @@
       "type": "boolean"
     }
   },
-  "required": []
+  "required": [],
+  "x-response-content-types": [
+    "application/json"
+  ]
 }
 `
 ---
@@ -2179,7 +2233,10 @@
       "type": "boolean"
     }
   },
-  "required": []
+  "required": [],
+  "x-response-content-types": [
+    "application/json"
+  ]
 }
 `
 ---
@@ -2244,7 +2301,10 @@
       "type": "boolean"
     }
   },
-  "required": []
+  "required": [],
+  "x-response-content-types": [
+    "application/json"
+  ]
 }
 `
 ---
@@ -2303,7 +2363,10 @@
       "type": "boolean"
     }
   },
-  "required": []
+  "required": [],
+  "x-response-content-types": [
+    "application/json"
+  ]
 }
 `
 ---
@@ -2362,7 +2425,10 @@
       "type": "boolean"
     }
   },
-  "required": []
+  "required": [],
+  "x-response-content-types": [
+    "application/json"
+  ]
 }
 `
 ---
@@ -2427,7 +2493,10 @@
       "type": "boolean"
     }
   },
-  "required": []
+  "required": [],
+  "x-response-content-types": [
+    "application/json"
+  ]
 }
 `
 ---
@@ -2492,7 +2561,10 @@
       "type": "boolean"
     }
   },
-  "required": []
+  "required": [],
+  "x-response-content-types": [
+    "application/json"
+  ]
 }
 `
 ---
@@ -2550,7 +2622,10 @@
       "type": "boolean"
     }
   },
-  "required": []
+  "required": [],
+  "x-response-content-types": [
+    "application/json"
+  ]
 }
 `
 ---
@@ -2608,7 +2683,10 @@
       "type": "boolean"
     }
   },
-  "required": []
+  "required": [],
+  "x-response-content-types": [
+    "application/json"
+  ]
 }
 `
 ---
@@ -2667,7 +2745,10 @@
       "type": "boolean"
     }
   },
-  "required": []
+  "required": [],
+  "x-response-content-types": [
+    "application/json"
+  ]
 }
 `
 ---
@@ -2732,7 +2813,10 @@
       "type": "boolean"
     }
   },
-  "required": []
+  "required": [],
+  "x-response-content-types": [
+    "application/json"
+  ]
 }
 `
 ---
@@ -2790,7 +2874,10 @@
       "type": "boolean"
     }
   },
-  "required": []
+  "required": [],
+  "x-response-content-types": [
+    "application/json"
+  ]
 }
 `
 ---
@@ -2848,7 +2935,10 @@
       "type": "boolean"
     }
   },
-  "required": []
+  "required": [],
+  "x-response-content-types": [
+    "application/json"
+  ]
 }
 `
 ---
@@ -2906,7 +2996,10 @@
       "type": "boolean"
     }
   },
-  "required": []
+  "required": [],
+  "x-response-content-types": [
+    "application/json"
+  ]
 }
 `
 ---
@@ -2964,7 +3057,10 @@
       "type": "boolean"
     }
   },
-  "required": []
+  "required": [],
+  "x-response-content-types": [
+    "application/json"
+  ]
 }
 `
 ---
@@ -2972,7 +3068,7 @@
 **Description**: Reschedule all
 **Method**: POST
 **Endpoint**: /ai/scheduling/reschedule-all
-**Capability Tags**: ["ai", "scheduling", "reschedule", "all", "create", "dry", "run", "if", "true", "preview", "only", "no", "cancel", "delete", "persist", "return", "proposal", "without", "side", "effect", "order", "by", "edd", "epo", "fifo", "readiness", "default", "data", "error", "success"]
+**Capability Tags**: ["ai", "scheduling", "reschedule", "all", "create", "dry", "run", "if", "true", "preview", "only", "no", "cancel", "delete", "persist", "return", "proposal", "without", "side", "effect", "order", "by", "edd", "epo", "fifo", "readiness", "material", "priority", "weighted", "tardiness", "product", "deadline", "default", "data", "error", "success"]
 **Requires Approval**: true
 **Side Effect Level**: HIGH
 **Read Only**: false
@@ -2986,7 +3082,7 @@
       "type": "boolean"
     },
     "order_by": {
-      "description": "\"edd\" | \"epo\" | \"fifo\" | \"readiness\" (default: \"epo\")",
+      "description": "\"edd\" | \"epo\" | \"fifo\" | \"readiness\" | \"material_priority\" | \"weighted_tardiness_material\" | \"product_deadline_fifo\" (default: \"product_deadline_fifo\")",
       "type": "string"
     }
   },
@@ -3004,7 +3100,7 @@
         "type": "boolean"
       },
       "order_by": {
-        "description": "\"edd\" | \"epo\" | \"fifo\" | \"readiness\" (default: \"epo\")",
+        "description": "\"edd\" | \"epo\" | \"fifo\" | \"readiness\" | \"material_priority\" | \"weighted_tardiness_material\" | \"product_deadline_fifo\" (default: \"product_deadline_fifo\")",
         "type": "string"
       }
     }
@@ -3037,7 +3133,10 @@
       "type": "boolean"
     }
   },
-  "required": []
+  "required": [],
+  "x-response-content-types": [
+    "application/json"
+  ]
 }
 `
 ---
@@ -3236,7 +3335,10 @@
       "type": "boolean"
     }
   },
-  "required": []
+  "required": [],
+  "x-response-content-types": [
+    "application/json"
+  ]
 }
 `
 ---
@@ -3338,7 +3440,10 @@
       "type": "boolean"
     }
   },
-  "required": []
+  "required": [],
+  "x-response-content-types": [
+    "application/json"
+  ]
 }
 `
 ---
@@ -3407,7 +3512,10 @@
       "type": "boolean"
     }
   },
-  "required": []
+  "required": [],
+  "x-response-content-types": [
+    "application/json"
+  ]
 }
 `
 ---
@@ -3516,7 +3624,10 @@
       "type": "boolean"
     }
   },
-  "required": []
+  "required": [],
+  "x-response-content-types": [
+    "application/json"
+  ]
 }
 `
 ---
@@ -3658,7 +3769,10 @@
       "type": "boolean"
     }
   },
-  "required": []
+  "required": [],
+  "x-response-content-types": [
+    "application/json"
+  ]
 }
 `
 ---
@@ -3752,7 +3866,10 @@
       "type": "boolean"
     }
   },
-  "required": []
+  "required": [],
+  "x-response-content-types": [
+    "application/json"
+  ]
 }
 `
 ---
@@ -3810,7 +3927,10 @@
       "type": "boolean"
     }
   },
-  "required": []
+  "required": [],
+  "x-response-content-types": [
+    "application/json"
+  ]
 }
 `
 ---
@@ -3915,7 +4035,10 @@
       "type": "boolean"
     }
   },
-  "required": []
+  "required": [],
+  "x-response-content-types": [
+    "application/json"
+  ]
 }
 `
 ---
@@ -4111,7 +4234,10 @@
       "type": "boolean"
     }
   },
-  "required": []
+  "required": [],
+  "x-response-content-types": [
+    "application/json"
+  ]
 }
 `
 ---
@@ -4223,7 +4349,10 @@
       "type": "boolean"
     }
   },
-  "required": []
+  "required": [],
+  "x-response-content-types": [
+    "application/json"
+  ]
 }
 `
 ---
@@ -4343,7 +4472,10 @@
       "type": "boolean"
     }
   },
-  "required": []
+  "required": [],
+  "x-response-content-types": [
+    "application/json"
+  ]
 }
 `
 ---
@@ -4491,7 +4623,10 @@
       "type": "boolean"
     }
   },
-  "required": []
+  "required": [],
+  "x-response-content-types": [
+    "application/json"
+  ]
 }
 `
 ---
@@ -4643,7 +4778,10 @@
       "type": "boolean"
     }
   },
-  "required": []
+  "required": [],
+  "x-response-content-types": [
+    "application/json"
+  ]
 }
 `
 ---
@@ -4809,7 +4947,10 @@
       "type": "boolean"
     }
   },
-  "required": []
+  "required": [],
+  "x-response-content-types": [
+    "application/json"
+  ]
 }
 `
 ---
@@ -4939,7 +5080,10 @@
       "type": "boolean"
     }
   },
-  "required": []
+  "required": [],
+  "x-response-content-types": [
+    "application/json"
+  ]
 }
 `
 ---
@@ -5081,7 +5225,10 @@
       "type": "boolean"
     }
   },
-  "required": []
+  "required": [],
+  "x-response-content-types": [
+    "application/json"
+  ]
 }
 `
 ---
@@ -5250,7 +5397,10 @@
       "type": "boolean"
     }
   },
-  "required": []
+  "required": [],
+  "x-response-content-types": [
+    "application/json"
+  ]
 }
 `
 ---
@@ -5338,7 +5488,10 @@
       "type": "boolean"
     }
   },
-  "required": []
+  "required": [],
+  "x-response-content-types": [
+    "application/json"
+  ]
 }
 `
 ---
@@ -5453,7 +5606,10 @@
       "type": "boolean"
     }
   },
-  "required": []
+  "required": [],
+  "x-response-content-types": [
+    "application/json"
+  ]
 }
 `
 ---
@@ -5626,7 +5782,10 @@
       "type": "boolean"
     }
   },
-  "required": []
+  "required": [],
+  "x-response-content-types": [
+    "application/json"
+  ]
 }
 `
 ---
@@ -5747,7 +5906,10 @@
       "type": "boolean"
     }
   },
-  "required": []
+  "required": [],
+  "x-response-content-types": [
+    "application/json"
+  ]
 }
 `
 ---
@@ -6053,7 +6215,10 @@
       "type": "boolean"
     }
   },
-  "required": []
+  "required": [],
+  "x-response-content-types": [
+    "application/json"
+  ]
 }
 `
 ---
@@ -6196,7 +6361,10 @@
       "type": "boolean"
     }
   },
-  "required": []
+  "required": [],
+  "x-response-content-types": [
+    "application/json"
+  ]
 }
 `
 ---
@@ -6422,7 +6590,10 @@
       "type": "boolean"
     }
   },
-  "required": []
+  "required": [],
+  "x-response-content-types": [
+    "application/json"
+  ]
 }
 `
 ---
@@ -6758,7 +6929,10 @@
       "type": "boolean"
     }
   },
-  "required": []
+  "required": [],
+  "x-response-content-types": [
+    "application/json"
+  ]
 }
 `
 ---
@@ -6916,7 +7090,10 @@
       "type": "boolean"
     }
   },
-  "required": []
+  "required": [],
+  "x-response-content-types": [
+    "application/json"
+  ]
 }
 `
 ---
@@ -7164,7 +7341,10 @@
       "type": "boolean"
     }
   },
-  "required": []
+  "required": [],
+  "x-response-content-types": [
+    "application/json"
+  ]
 }
 `
 ---
@@ -7221,7 +7401,10 @@
     "success": {
       "type": "boolean"
     }
-  }
+  },
+  "x-response-content-types": [
+    "application/json"
+  ]
 }
 `
 ---
@@ -7350,7 +7533,10 @@
       "type": "boolean"
     }
   },
-  "required": []
+  "required": [],
+  "x-response-content-types": [
+    "application/json"
+  ]
 }
 `
 ---
@@ -7493,7 +7679,10 @@
       "type": "boolean"
     }
   },
-  "required": []
+  "required": [],
+  "x-response-content-types": [
+    "application/json"
+  ]
 }
 `
 ---
@@ -7596,7 +7785,10 @@
       "type": "boolean"
     }
   },
-  "required": []
+  "required": [],
+  "x-response-content-types": [
+    "application/json"
+  ]
 }
 `
 ---
@@ -7781,7 +7973,10 @@
       "type": "boolean"
     }
   },
-  "required": []
+  "required": [],
+  "x-response-content-types": [
+    "application/json"
+  ]
 }
 `
 ---
@@ -7977,7 +8172,10 @@
       "type": "boolean"
     }
   },
-  "required": []
+  "required": [],
+  "x-response-content-types": [
+    "application/json"
+  ]
 }
 `
 ---
@@ -8112,7 +8310,10 @@
       "type": "boolean"
     }
   },
-  "required": []
+  "required": [],
+  "x-response-content-types": [
+    "application/json"
+  ]
 }
 `
 ---
@@ -8207,7 +8408,10 @@
       "type": "boolean"
     }
   },
-  "required": []
+  "required": [],
+  "x-response-content-types": [
+    "application/json"
+  ]
 }
 `
 ---
@@ -8271,7 +8475,10 @@
       "type": "boolean"
     }
   },
-  "required": []
+  "required": [],
+  "x-response-content-types": [
+    "application/json"
+  ]
 }
 `
 ---
@@ -8315,7 +8522,10 @@
       "type": "boolean"
     }
   },
-  "required": []
+  "required": [],
+  "x-response-content-types": [
+    "application/json"
+  ]
 }
 `
 ---
@@ -8455,7 +8665,10 @@
       "type": "boolean"
     }
   },
-  "required": []
+  "required": [],
+  "x-response-content-types": [
+    "application/json"
+  ]
 }
 `
 ---
@@ -8653,7 +8866,10 @@
       "type": "boolean"
     }
   },
-  "required": []
+  "required": [],
+  "x-response-content-types": [
+    "application/json"
+  ]
 }
 `
 ---
@@ -8767,7 +8983,10 @@
       "type": "boolean"
     }
   },
-  "required": []
+  "required": [],
+  "x-response-content-types": [
+    "application/json"
+  ]
 }
 `
 ---
@@ -8910,7 +9129,10 @@
       "type": "boolean"
     }
   },
-  "required": []
+  "required": [],
+  "x-response-content-types": [
+    "application/json"
+  ]
 }
 `
 ---
@@ -8964,7 +9186,10 @@
       "type": "boolean"
     }
   },
-  "required": []
+  "required": [],
+  "x-response-content-types": [
+    "application/json"
+  ]
 }
 `
 ---
@@ -9008,7 +9233,10 @@
       "type": "boolean"
     }
   },
-  "required": []
+  "required": [],
+  "x-response-content-types": [
+    "application/json"
+  ]
 }
 `
 ---
@@ -9078,7 +9306,10 @@
       "type": "boolean"
     }
   },
-  "required": []
+  "required": [],
+  "x-response-content-types": [
+    "application/json"
+  ]
 }
 `
 ---
@@ -9138,7 +9369,10 @@
       "type": "boolean"
     }
   },
-  "required": []
+  "required": [],
+  "x-response-content-types": [
+    "application/json"
+  ]
 }
 `
 ---
@@ -9238,7 +9472,10 @@
       "type": "boolean"
     }
   },
-  "required": []
+  "required": [],
+  "x-response-content-types": [
+    "application/json"
+  ]
 }
 `
 ---
@@ -9399,7 +9636,10 @@
       "type": "boolean"
     }
   },
-  "required": []
+  "required": [],
+  "x-response-content-types": [
+    "application/json"
+  ]
 }
 `
 ---
@@ -9466,7 +9706,10 @@
     "success": {
       "type": "boolean"
     }
-  }
+  },
+  "x-response-content-types": [
+    "application/json"
+  ]
 }
 `
 ---
@@ -9588,7 +9831,10 @@
       "type": "boolean"
     }
   },
-  "required": []
+  "required": [],
+  "x-response-content-types": [
+    "application/json"
+  ]
 }
 `
 ---
@@ -9750,7 +9996,10 @@
       "type": "boolean"
     }
   },
-  "required": []
+  "required": [],
+  "x-response-content-types": [
+    "application/json"
+  ]
 }
 `
 ---
@@ -9853,7 +10102,10 @@
       "type": "boolean"
     }
   },
-  "required": []
+  "required": [],
+  "x-response-content-types": [
+    "application/json"
+  ]
 }
 `
 ---
@@ -9910,7 +10162,10 @@
     "success": {
       "type": "boolean"
     }
-  }
+  },
+  "x-response-content-types": [
+    "application/json"
+  ]
 }
 `
 ---
@@ -10064,7 +10319,10 @@
       "type": "boolean"
     }
   },
-  "required": []
+  "required": [],
+  "x-response-content-types": [
+    "application/json"
+  ]
 }
 `
 ---
@@ -10350,7 +10608,240 @@
       "type": "boolean"
     }
   },
-  "required": []
+  "required": [],
+  "x-response-content-types": [
+    "application/json"
+  ]
+}
+`
+---
+## get__production-analytics_downtime
+**Description**: Downtime analytics
+**Method**: GET
+**Endpoint**: /production-analytics/downtime
+**Capability Tags**: ["production", "analytic", "downtime", "list", "row", "visualization", "data", "error", "success"]
+**Requires Approval**: false
+**Side Effect Level**: NONE
+**Read Only**: true
+**Input Schema**:
+`json
+{
+  "type": "object",
+  "properties": {},
+  "x-path-params": [],
+  "x-query-params": [],
+  "x-param-sources": {},
+  "x-allowed-roles": [
+    "viewer",
+    "planner",
+    "manager",
+    "admin"
+  ]
+}
+`
+**Output Schema**:
+`json
+{
+  "type": "object",
+  "properties": {
+    "data": {
+      "type": "object",
+      "properties": {}
+    },
+    "error": {
+      "type": "string"
+    },
+    "success": {
+      "type": "boolean"
+    }
+  },
+  "x-response-content-types": [
+    "application/json"
+  ]
+}
+`
+---
+## get__production-analytics_job-completion
+**Description**: Job completion analytics
+**Method**: GET
+**Endpoint**: /production-analytics/job-completion
+**Capability Tags**: ["production", "analytic", "job", "completion", "list", "row", "visualization", "data", "error", "success"]
+**Requires Approval**: false
+**Side Effect Level**: NONE
+**Read Only**: true
+**Input Schema**:
+`json
+{
+  "type": "object",
+  "properties": {},
+  "x-path-params": [],
+  "x-query-params": [],
+  "x-param-sources": {},
+  "x-allowed-roles": [
+    "viewer",
+    "planner",
+    "manager",
+    "admin"
+  ]
+}
+`
+**Output Schema**:
+`json
+{
+  "type": "object",
+  "properties": {
+    "data": {
+      "type": "object",
+      "properties": {}
+    },
+    "error": {
+      "type": "string"
+    },
+    "success": {
+      "type": "boolean"
+    }
+  },
+  "x-response-content-types": [
+    "application/json"
+  ]
+}
+`
+---
+## get__production-analytics_machine-utilization
+**Description**: Machine utilization analytics
+**Method**: GET
+**Endpoint**: /production-analytics/machine-utilization
+**Capability Tags**: ["production", "analytic", "machine", "utilization", "list", "row", "visualization", "data", "error", "success"]
+**Requires Approval**: false
+**Side Effect Level**: NONE
+**Read Only**: true
+**Input Schema**:
+`json
+{
+  "type": "object",
+  "properties": {},
+  "x-path-params": [],
+  "x-query-params": [],
+  "x-param-sources": {},
+  "x-allowed-roles": [
+    "viewer",
+    "planner",
+    "manager",
+    "admin"
+  ]
+}
+`
+**Output Schema**:
+`json
+{
+  "type": "object",
+  "properties": {
+    "data": {
+      "type": "object",
+      "properties": {}
+    },
+    "error": {
+      "type": "string"
+    },
+    "success": {
+      "type": "boolean"
+    }
+  },
+  "x-response-content-types": [
+    "application/json"
+  ]
+}
+`
+---
+## get__production-analytics_output
+**Description**: Production output analytics
+**Method**: GET
+**Endpoint**: /production-analytics/output
+**Capability Tags**: ["production", "analytic", "output", "list", "row", "visualization", "data", "error", "success"]
+**Requires Approval**: false
+**Side Effect Level**: NONE
+**Read Only**: true
+**Input Schema**:
+`json
+{
+  "type": "object",
+  "properties": {},
+  "x-path-params": [],
+  "x-query-params": [],
+  "x-param-sources": {},
+  "x-allowed-roles": [
+    "viewer",
+    "planner",
+    "manager",
+    "admin"
+  ]
+}
+`
+**Output Schema**:
+`json
+{
+  "type": "object",
+  "properties": {
+    "data": {
+      "type": "object",
+      "properties": {}
+    },
+    "error": {
+      "type": "string"
+    },
+    "success": {
+      "type": "boolean"
+    }
+  },
+  "x-response-content-types": [
+    "application/json"
+  ]
+}
+`
+---
+## get__production-analytics_summary
+**Description**: Production analytics summary
+**Method**: GET
+**Endpoint**: /production-analytics/summary
+**Capability Tags**: ["production", "analytic", "summary", "list", "metric", "visualization", "data", "error", "success"]
+**Requires Approval**: false
+**Side Effect Level**: NONE
+**Read Only**: true
+**Input Schema**:
+`json
+{
+  "type": "object",
+  "properties": {},
+  "x-path-params": [],
+  "x-query-params": [],
+  "x-param-sources": {},
+  "x-allowed-roles": [
+    "viewer",
+    "planner",
+    "manager",
+    "admin"
+  ]
+}
+`
+**Output Schema**:
+`json
+{
+  "type": "object",
+  "properties": {
+    "data": {
+      "type": "object",
+      "properties": {}
+    },
+    "error": {
+      "type": "string"
+    },
+    "success": {
+      "type": "boolean"
+    }
+  },
+  "x-response-content-types": [
+    "application/json"
+  ]
 }
 `
 ---
@@ -10507,7 +10998,10 @@
       "type": "boolean"
     }
   },
-  "required": []
+  "required": [],
+  "x-response-content-types": [
+    "application/json"
+  ]
 }
 `
 ---
@@ -10674,7 +11168,10 @@
       "type": "boolean"
     }
   },
-  "required": []
+  "required": [],
+  "x-response-content-types": [
+    "application/json"
+  ]
 }
 `
 ---
@@ -10867,7 +11364,10 @@
       "type": "boolean"
     }
   },
-  "required": []
+  "required": [],
+  "x-response-content-types": [
+    "application/json"
+  ]
 }
 `
 ---
@@ -11006,7 +11506,10 @@
       "type": "boolean"
     }
   },
-  "required": []
+  "required": [],
+  "x-response-content-types": [
+    "application/json"
+  ]
 }
 `
 ---
@@ -11181,7 +11684,10 @@
     "success": {
       "type": "boolean"
     }
-  }
+  },
+  "x-response-content-types": [
+    "application/json"
+  ]
 }
 `
 ---
@@ -11284,7 +11790,10 @@
       "type": "boolean"
     }
   },
-  "required": []
+  "required": [],
+  "x-response-content-types": [
+    "application/json"
+  ]
 }
 `
 ---
@@ -11659,7 +12168,10 @@
       "type": "boolean"
     }
   },
-  "required": []
+  "required": [],
+  "x-response-content-types": [
+    "application/json"
+  ]
 }
 `
 ---
@@ -11797,7 +12309,10 @@
       "type": "boolean"
     }
   },
-  "required": []
+  "required": [],
+  "x-response-content-types": [
+    "application/json"
+  ]
 }
 `
 ---
@@ -11891,7 +12406,10 @@
       "type": "boolean"
     }
   },
-  "required": []
+  "required": [],
+  "x-response-content-types": [
+    "application/json"
+  ]
 }
 `
 ---
@@ -11982,7 +12500,10 @@
       "type": "boolean"
     }
   },
-  "required": []
+  "required": [],
+  "x-response-content-types": [
+    "application/json"
+  ]
 }
 `
 ---
@@ -12035,7 +12556,10 @@
     "success": {
       "type": "boolean"
     }
-  }
+  },
+  "x-response-content-types": [
+    "application/json"
+  ]
 }
 `
 ---
@@ -12125,7 +12649,10 @@
       "type": "boolean"
     }
   },
-  "required": []
+  "required": [],
+  "x-response-content-types": [
+    "application/json"
+  ]
 }
 `
 ---
@@ -12212,7 +12739,10 @@
       "type": "boolean"
     }
   },
-  "required": []
+  "required": [],
+  "x-response-content-types": [
+    "application/json"
+  ]
 }
 `
 ---
@@ -12304,7 +12834,10 @@
       "type": "boolean"
     }
   },
-  "required": []
+  "required": [],
+  "x-response-content-types": [
+    "application/json"
+  ]
 }
 `
 ---
@@ -12361,7 +12894,10 @@
     "success": {
       "type": "boolean"
     }
-  }
+  },
+  "x-response-content-types": [
+    "application/json"
+  ]
 }
 `
 ---
@@ -12448,7 +12984,10 @@
       "type": "boolean"
     }
   },
-  "required": []
+  "required": [],
+  "x-response-content-types": [
+    "application/json"
+  ]
 }
 `
 ---
@@ -12524,7 +13063,10 @@
       "type": "boolean"
     }
   },
-  "required": []
+  "required": [],
+  "x-response-content-types": [
+    "application/json"
+  ]
 }
 `
 ---
@@ -12581,7 +13123,10 @@
     "success": {
       "type": "boolean"
     }
-  }
+  },
+  "x-response-content-types": [
+    "application/json"
+  ]
 }
 `
 ---
@@ -12671,7 +13216,10 @@
       "type": "boolean"
     }
   },
-  "required": []
+  "required": [],
+  "x-response-content-types": [
+    "application/json"
+  ]
 }
 `
 ---
@@ -12758,7 +13306,10 @@
       "type": "boolean"
     }
   },
-  "required": []
+  "required": [],
+  "x-response-content-types": [
+    "application/json"
+  ]
 }
 `
 ---
@@ -12815,7 +13366,10 @@
     "success": {
       "type": "boolean"
     }
-  }
+  },
+  "x-response-content-types": [
+    "application/json"
+  ]
 }
 `
 ---
@@ -12911,7 +13465,10 @@
       "type": "boolean"
     }
   },
-  "required": []
+  "required": [],
+  "x-response-content-types": [
+    "application/json"
+  ]
 }
 `
 ---
@@ -12999,7 +13556,10 @@
       "type": "boolean"
     }
   },
-  "required": []
+  "required": [],
+  "x-response-content-types": [
+    "application/json"
+  ]
 }
 `
 ---
@@ -13052,15 +13612,18 @@
     "success": {
       "type": "boolean"
     }
-  }
+  },
+  "x-response-content-types": [
+    "application/json"
+  ]
 }
 `
 ---
 ## get__reports_bottlenecks
-**Description**: Bottleneck forecast
+**Description**: Bottleneck PDF
 **Method**: GET
 **Endpoint**: /reports/bottlenecks
-**Capability Tags**: ["report", "bottleneck", "list", "forecast", "data", "error", "success"]
+**Capability Tags**: ["report", "bottleneck", "list", "pdf", "generate", "a"]
 **Requires Approval**: false
 **Side Effect Level**: NONE
 **Read Only**: true
@@ -13083,27 +13646,52 @@
 **Output Schema**:
 `json
 {
+  "type": "file",
+  "x-response-content-types": [
+    "application/pdf"
+  ]
+}
+`
+---
+## get__reports_downtime
+**Description**: Downtime PDF
+**Method**: GET
+**Endpoint**: /reports/downtime
+**Capability Tags**: ["report", "downtime", "list", "pdf", "generate", "a"]
+**Requires Approval**: false
+**Side Effect Level**: NONE
+**Read Only**: true
+**Input Schema**:
+`json
+{
   "type": "object",
-  "properties": {
-    "data": {
-      "type": "object",
-      "properties": {}
-    },
-    "error": {
-      "type": "string"
-    },
-    "success": {
-      "type": "boolean"
-    }
-  }
+  "properties": {},
+  "x-path-params": [],
+  "x-query-params": [],
+  "x-param-sources": {},
+  "x-allowed-roles": [
+    "viewer",
+    "planner",
+    "manager",
+    "admin"
+  ]
+}
+`
+**Output Schema**:
+`json
+{
+  "type": "file",
+  "x-response-content-types": [
+    "application/pdf"
+  ]
 }
 `
 ---
 ## get__reports_inventory-trends
-**Description**: Inventory trends
+**Description**: Inventory trends PDF
 **Method**: GET
 **Endpoint**: /reports/inventory-trends
-**Capability Tags**: ["report", "inventory", "trend", "list", "data", "error", "success"]
+**Capability Tags**: ["report", "inventory", "trend", "list", "pdf", "generate", "a"]
 **Requires Approval**: false
 **Side Effect Level**: NONE
 **Read Only**: true
@@ -13126,27 +13714,18 @@
 **Output Schema**:
 `json
 {
-  "type": "object",
-  "properties": {
-    "data": {
-      "type": "object",
-      "properties": {}
-    },
-    "error": {
-      "type": "string"
-    },
-    "success": {
-      "type": "boolean"
-    }
-  }
+  "type": "file",
+  "x-response-content-types": [
+    "application/pdf"
+  ]
 }
 `
 ---
 ## get__reports_job-completion
-**Description**: Job completion
+**Description**: Job completion PDF
 **Method**: GET
 **Endpoint**: /reports/job-completion
-**Capability Tags**: ["report", "job", "completion", "list", "data", "error", "success"]
+**Capability Tags**: ["report", "job", "completion", "list", "pdf", "generate", "a"]
 **Requires Approval**: false
 **Side Effect Level**: NONE
 **Read Only**: true
@@ -13169,27 +13748,18 @@
 **Output Schema**:
 `json
 {
-  "type": "object",
-  "properties": {
-    "data": {
-      "type": "object",
-      "properties": {}
-    },
-    "error": {
-      "type": "string"
-    },
-    "success": {
-      "type": "boolean"
-    }
-  }
+  "type": "file",
+  "x-response-content-types": [
+    "application/pdf"
+  ]
 }
 `
 ---
 ## get__reports_machine-utilization
-**Description**: Machine utilization
+**Description**: Machine utilization PDF
 **Method**: GET
 **Endpoint**: /reports/machine-utilization
-**Capability Tags**: ["report", "machine", "utilization", "list", "data", "error", "success"]
+**Capability Tags**: ["report", "machine", "utilization", "list", "pdf", "generate", "a"]
 **Requires Approval**: false
 **Side Effect Level**: NONE
 **Read Only**: true
@@ -13212,27 +13782,18 @@
 **Output Schema**:
 `json
 {
-  "type": "object",
-  "properties": {
-    "data": {
-      "type": "object",
-      "properties": {}
-    },
-    "error": {
-      "type": "string"
-    },
-    "success": {
-      "type": "boolean"
-    }
-  }
+  "type": "file",
+  "x-response-content-types": [
+    "application/pdf"
+  ]
 }
 `
 ---
 ## get__reports_maintenance-efficiency
-**Description**: Maintenance efficiency
+**Description**: Maintenance efficiency PDF
 **Method**: GET
 **Endpoint**: /reports/maintenance-efficiency
-**Capability Tags**: ["report", "maintenance", "efficiency", "list", "data", "error", "success"]
+**Capability Tags**: ["report", "maintenance", "efficiency", "list", "pdf", "generate", "a"]
 **Requires Approval**: false
 **Side Effect Level**: NONE
 **Read Only**: true
@@ -13255,27 +13816,18 @@
 **Output Schema**:
 `json
 {
-  "type": "object",
-  "properties": {
-    "data": {
-      "type": "object",
-      "properties": {}
-    },
-    "error": {
-      "type": "string"
-    },
-    "success": {
-      "type": "boolean"
-    }
-  }
+  "type": "file",
+  "x-response-content-types": [
+    "application/pdf"
+  ]
 }
 `
 ---
 ## get__reports_oee
-**Description**: OEE trends
+**Description**: OEE trends PDF
 **Method**: GET
 **Endpoint**: /reports/oee
-**Capability Tags**: ["report", "oee", "list", "trend", "data", "error", "success"]
+**Capability Tags**: ["report", "oee", "list", "trend", "pdf", "generate", "a"]
 **Requires Approval**: false
 **Side Effect Level**: NONE
 **Read Only**: true
@@ -13298,27 +13850,18 @@
 **Output Schema**:
 `json
 {
-  "type": "object",
-  "properties": {
-    "data": {
-      "type": "object",
-      "properties": {}
-    },
-    "error": {
-      "type": "string"
-    },
-    "success": {
-      "type": "boolean"
-    }
-  }
+  "type": "file",
+  "x-response-content-types": [
+    "application/pdf"
+  ]
 }
 `
 ---
 ## get__reports_production-output
-**Description**: Production output per slot
+**Description**: Production output PDF
 **Method**: GET
 **Endpoint**: /reports/production-output
-**Capability Tags**: ["report", "production", "output", "list", "per", "slot", "data", "error", "success"]
+**Capability Tags**: ["report", "production", "output", "list", "pdf", "generate", "a"]
 **Requires Approval**: false
 **Side Effect Level**: NONE
 **Read Only**: true
@@ -13341,27 +13884,18 @@
 **Output Schema**:
 `json
 {
-  "type": "object",
-  "properties": {
-    "data": {
-      "type": "object",
-      "properties": {}
-    },
-    "error": {
-      "type": "string"
-    },
-    "success": {
-      "type": "boolean"
-    }
-  }
+  "type": "file",
+  "x-response-content-types": [
+    "application/pdf"
+  ]
 }
 `
 ---
 ## get__reports_quality-trends
-**Description**: Quality trends
+**Description**: Quality trends PDF
 **Method**: GET
 **Endpoint**: /reports/quality-trends
-**Capability Tags**: ["report", "quality", "trend", "list", "data", "error", "success"]
+**Capability Tags**: ["report", "quality", "trend", "list", "pdf", "generate", "a"]
 **Requires Approval**: false
 **Side Effect Level**: NONE
 **Read Only**: true
@@ -13384,19 +13918,10 @@
 **Output Schema**:
 `json
 {
-  "type": "object",
-  "properties": {
-    "data": {
-      "type": "object",
-      "properties": {}
-    },
-    "error": {
-      "type": "string"
-    },
-    "success": {
-      "type": "boolean"
-    }
-  }
+  "type": "file",
+  "x-response-content-types": [
+    "application/pdf"
+  ]
 }
 `
 ---
@@ -13476,7 +14001,10 @@
       "type": "boolean"
     }
   },
-  "required": []
+  "required": [],
+  "x-response-content-types": [
+    "application/json"
+  ]
 }
 `
 ---
@@ -13534,7 +14062,10 @@
     "success": {
       "type": "boolean"
     }
-  }
+  },
+  "x-response-content-types": [
+    "application/json"
+  ]
 }
 `
 ---
@@ -13592,7 +14123,10 @@
     "success": {
       "type": "boolean"
     }
-  }
+  },
+  "x-response-content-types": [
+    "application/json"
+  ]
 }
 `
 ---
@@ -13656,7 +14190,10 @@
     "success": {
       "type": "boolean"
     }
-  }
+  },
+  "x-response-content-types": [
+    "application/json"
+  ]
 }
 `
 ---
@@ -13720,7 +14257,10 @@
     "success": {
       "type": "boolean"
     }
-  }
+  },
+  "x-response-content-types": [
+    "application/json"
+  ]
 }
 `
 ---
@@ -13762,7 +14302,10 @@
     "success": {
       "type": "boolean"
     }
-  }
+  },
+  "x-response-content-types": [
+    "application/json"
+  ]
 }
 `
 ---
@@ -13849,7 +14392,10 @@
       "type": "boolean"
     }
   },
-  "required": []
+  "required": [],
+  "x-response-content-types": [
+    "application/json"
+  ]
 }
 `
 ---
@@ -14047,7 +14593,10 @@
       "type": "boolean"
     }
   },
-  "required": []
+  "required": [],
+  "x-response-content-types": [
+    "application/json"
+  ]
 }
 `
 ---
@@ -14183,7 +14732,10 @@
     "success": {
       "type": "boolean"
     }
-  }
+  },
+  "x-response-content-types": [
+    "application/json"
+  ]
 }
 `
 ---
@@ -14252,7 +14804,10 @@
     "success": {
       "type": "boolean"
     }
-  }
+  },
+  "x-response-content-types": [
+    "application/json"
+  ]
 }
 `
 ---
@@ -14295,7 +14850,10 @@
     "success": {
       "type": "boolean"
     }
-  }
+  },
+  "x-response-content-types": [
+    "application/json"
+  ]
 }
 `
 ---
@@ -14337,7 +14895,10 @@
     "success": {
       "type": "boolean"
     }
-  }
+  },
+  "x-response-content-types": [
+    "application/json"
+  ]
 }
 `
 ---
@@ -14388,7 +14949,10 @@
     "success": {
       "type": "boolean"
     }
-  }
+  },
+  "x-response-content-types": [
+    "application/json"
+  ]
 }
 `
 ---
@@ -14451,7 +15015,10 @@
       "type": "boolean"
     }
   },
-  "required": []
+  "required": [],
+  "x-response-content-types": [
+    "application/json"
+  ]
 }
 `
 ---
@@ -14518,7 +15085,10 @@
       "type": "boolean"
     }
   },
-  "required": []
+  "required": [],
+  "x-response-content-types": [
+    "application/json"
+  ]
 }
 `
 ---
@@ -14664,7 +15234,10 @@
       "type": "boolean"
     }
   },
-  "required": []
+  "required": [],
+  "x-response-content-types": [
+    "application/json"
+  ]
 }
 `
 ---
@@ -14915,7 +15488,10 @@
       "type": "boolean"
     }
   },
-  "required": []
+  "required": [],
+  "x-response-content-types": [
+    "application/json"
+  ]
 }
 `
 ---
@@ -14972,7 +15548,10 @@
     "success": {
       "type": "boolean"
     }
-  }
+  },
+  "x-response-content-types": [
+    "application/json"
+  ]
 }
 `
 ---
@@ -15223,7 +15802,10 @@
       "type": "boolean"
     }
   },
-  "required": []
+  "required": [],
+  "x-response-content-types": [
+    "application/json"
+  ]
 }
 `
 ---

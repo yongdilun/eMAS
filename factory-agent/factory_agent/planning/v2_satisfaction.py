@@ -478,6 +478,9 @@ def _evaluate_requirement(
     requirement: RequirementLedgerEntry,
     evidence: EvidenceLedgerEntry,
 ) -> tuple[str | None, list[SatisfactionCheck], str]:
+    file_result = _evaluate_file_download_requirement(requirement, evidence)
+    if file_result is not None:
+        return file_result
     if requirement.requirement_type == "single_entity_status":
         return _evaluate_single_entity_requirement(requirement, evidence)
     if requirement.requirement_type == "multi_entity_status":
@@ -487,6 +490,43 @@ def _evaluate_requirement(
     if requirement.requirement_type == "document_answer":
         return _evaluate_document_requirement(requirement, evidence)
     return None, [], "unsupported_requirement_type"
+
+
+def _evaluate_file_download_requirement(
+    requirement: RequirementLedgerEntry,
+    evidence: EvidenceLedgerEntry,
+) -> tuple[str, list[SatisfactionCheck], str] | None:
+    file_download = evidence.normalized_result.get("file_download")
+    if not isinstance(file_download, Mapping):
+        return None
+
+    content_type = str(file_download.get("content_type") or "").split(";")[0].strip().lower()
+    download_url = str(file_download.get("download_url") or "").strip()
+    view_url = str(file_download.get("view_url") or download_url).strip()
+    filename = str(file_download.get("filename") or "").strip()
+    checks = [
+        _check(
+            "source_of_truth",
+            expected="api_tool:operational_state",
+            actual=f"{evidence.source_type}:{evidence.source_of_truth}",
+            passed=evidence.source_type == "api_tool" and evidence.source_of_truth == "operational_state",
+            evidence_ref=evidence.id,
+        ),
+        _check(
+            "file_download",
+            expected={"content_type": "application/pdf", "download_url": "present"},
+            actual={
+                "content_type": content_type,
+                "download_url_present": bool(download_url),
+                "view_url_present": bool(view_url),
+                "filename": filename,
+            },
+            passed=content_type == "application/pdf" and bool(download_url),
+            evidence_ref=evidence.id,
+            message="PDF file metadata is ready to render as a download/view card.",
+        ),
+    ]
+    return _status_from_checks(checks)
 
 
 def _evaluate_single_entity_requirement(

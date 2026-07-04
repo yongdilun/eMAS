@@ -112,6 +112,21 @@ def _product_status_tool() -> ToolInfo:
     )
 
 
+def _machine_utilization_report_tool() -> ToolInfo:
+    tool = _tool(
+        "get__reports_machine-utilization",
+        endpoint="/reports/machine-utilization",
+        tags=["report", "machine", "utilization", "list", "pdf", "generate"],
+        query_params=["start", "end"],
+        input_properties={
+            "start": {"type": "string"},
+            "end": {"type": "string"},
+        },
+    )
+    tool.output_schema = {"type": "object", "x-response-content-types": ["application/pdf"]}
+    return tool
+
+
 def _job_collection_tool() -> ToolInfo:
     return _tool(
         "get__jobs",
@@ -642,6 +657,31 @@ def test_semantic_intake_classifies_answer_instruction_as_non_executable():
     ]
     assert [need["requirement_id"] for need in capability_needs] == ["req-001"]
     assert all("explain" not in requirement.goal.lower() for requirement in ledger.requirements)
+
+
+def test_semantic_intake_routes_pdf_report_generation_to_report_entity():
+    state = build_initial_planner_owned_agent_graph_state(
+        "generate machine utilization report for this week",
+        tools_by_name={
+            "get__machines": _tool(
+                "get__machines",
+                endpoint="/machines",
+                tags=["machine", "list", "status"],
+                entity="machine",
+                response_contract="result_collection_v1",
+            ),
+            "get__reports_machine-utilization": _machine_utilization_report_tool(),
+        },
+    )
+
+    ledger = state.requirement_ledger
+    capability_needs = state.execution_trace.diagnostics["capability_needs"]
+
+    assert [requirement.entity for requirement in ledger.requirements] == ["report"]
+    assert ledger.requirements[0].constraints["report_type"] == "machine utilization"
+    assert ledger.requirements[0].constraints["report_format"] == "pdf"
+    assert capability_needs[0]["entity"] == "report"
+    assert capability_needs[0]["action"] == "list"
 
 
 def test_semantic_intake_classifies_formatting_instruction_as_non_executable():

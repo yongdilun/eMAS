@@ -556,6 +556,13 @@ def _normalize_api_result(
         normalized["error"] = error
         return normalized
 
+    file_download = _file_download_from_body(body)
+    if file_download is not None:
+        normalized["file_download"] = file_download
+        normalized["status"] = "file_ready"
+        normalized["summary"] = file_download.get("summary") or "The file is ready to view or download."
+        return normalized
+
     rows = _rows_from_body(body)
     if rows is not None:
         rows = [project_api_row(row, requirement=requirement, entity=entity) for row in rows]
@@ -672,6 +679,26 @@ def _fields_from_body(body: Mapping[str, Any]) -> dict[str, Any]:
         str(key): value
         for key, value in body.items()
         if key not in {"error", "message", "status_code"}
+    }
+
+
+def _file_download_from_body(body: Mapping[str, Any]) -> dict[str, Any] | None:
+    content_type = str(body.get("content_type") or "").split(";")[0].strip().lower()
+    if body.get("kind") != "file_download" and content_type != "application/pdf":
+        return None
+    download_url = str(body.get("download_url") or body.get("request_url") or "").strip()
+    view_url = str(body.get("view_url") or download_url).strip()
+    filename = str(body.get("filename") or "report.pdf").strip()
+    return {
+        "kind": "file_download",
+        "title": str(body.get("title") or "PDF report ready").strip(),
+        "filename": filename,
+        "content_type": str(body.get("content_type") or "application/pdf").strip(),
+        "download_url": download_url,
+        "view_url": view_url,
+        "request_url": str(body.get("request_url") or download_url).strip(),
+        "http_status": body.get("http_status"),
+        "summary": str(body.get("summary") or f"{filename} is ready to view or download.").strip(),
     }
 
 

@@ -28,6 +28,7 @@ from factory_agent.schemas import (
     ApprovalResponse,
     CompletedStepBlock,
     DiagnosticBlock,
+    FileDownloadBlock,
     KnowledgeAnswerBlock,
     MutationResultBlock,
     PlanResponse,
@@ -1981,6 +1982,41 @@ def _presentation_row(
     return row
 
 
+def _file_download_from_result(result: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not isinstance(result, dict):
+        return None
+    nested = result.get("file_download")
+    body = result.get("body")
+    payload = nested if isinstance(nested, dict) else body if isinstance(body, dict) else result
+    content_type = str(payload.get("content_type") or "").split(";")[0].strip().lower()
+    if payload.get("kind") != "file_download" and content_type != "application/pdf":
+        return None
+    filename = _trimmed(payload.get("filename")) or "report.pdf"
+    download_url = (
+        _trimmed(payload.get("download_url"))
+        or _trimmed(payload.get("request_url"))
+        or _trimmed(result.get("request_url"))
+    )
+    if not download_url:
+        return None
+    view_url = _trimmed(payload.get("view_url")) or download_url
+    summary = _trimmed(payload.get("summary")) or f"{filename} is ready to view or download."
+    title = _trimmed(payload.get("title")) or "PDF report ready"
+    return {
+        "title": title,
+        "filename": filename,
+        "content_type": content_type or "application/pdf",
+        "download_url": download_url,
+        "view_url": view_url,
+        "summary": summary,
+    }
+
+
+def _file_download_from_presentation(presentation: PresentationResponse) -> dict[str, Any] | None:
+    diagnostics = presentation.diagnostics if isinstance(presentation.diagnostics, dict) else {}
+    return _file_download_from_result(diagnostics)
+
+
 def _operation_rows_from_result(
     result: dict[str, Any] | None,
     *,
@@ -1993,6 +2029,8 @@ def _operation_rows_from_result(
 ) -> list[dict[str, Any]]:
     if not isinstance(result, dict):
         result = {}
+    if _file_download_from_result(result):
+        return []
 
     rows: list[dict[str, Any]] = []
     raw_outcomes = result.get("outcomes")
@@ -2823,6 +2861,8 @@ def _read_evidence(
             continue
         if not (_is_read_tool_name(step.tool_name) or isinstance(step.result, dict)):
             continue
+        if _file_download_from_result(step.result if isinstance(step.result, dict) else None):
+            continue
         step_order = int(step.step_index) if step.step_index is not None else source_index
         default_status = "failed" if status in {"FAILED", "AMBIGUOUS"} else "succeeded"
         rows = _operation_rows_from_result(
@@ -2852,6 +2892,8 @@ def _read_evidence(
         details = event.details if isinstance(event.details, dict) else {}
         result = details.get("result") if isinstance(details.get("result"), dict) else None
         args = details.get("args") if isinstance(details.get("args"), dict) else {}
+        if _file_download_from_result(result):
+            continue
         status = str(event.status or "").upper()
         default_status = "failed" if status in {"FAILED", "AMBIGUOUS"} else "succeeded"
         rows = _operation_rows_from_result(
@@ -4727,6 +4769,10 @@ def _short_message(
     if failure_profile is not None:
         return failure_profile.user_message
 
+    file_download = _file_download_from_presentation(presentation)
+    if state == "completed" and file_download:
+        return _trimmed(file_download.get("summary")) or _trimmed(presentation.summary) or "The PDF report is ready."
+
     diagnostics = presentation.diagnostics if isinstance(presentation.diagnostics, dict) else {}
     if diagnostics.get("reason") in {
         "reschedule_interaction_applied",
@@ -5101,6 +5147,21 @@ def _compose_blocks(
             )
         )
 
+    file_download = _file_download_from_presentation(presentation)
+    if state == "completed" and latest_pending is None and file_download:
+        blocks.append(
+            FileDownloadBlock(
+                id=f"file:{anchor}",
+                title=_trimmed(file_download.get("title")) or "PDF report ready",
+                filename=_trimmed(file_download.get("filename")) or "report.pdf",
+                content_type=_trimmed(file_download.get("content_type")) or "application/pdf",
+                download_url=_trimmed(file_download.get("download_url")) or "",
+                view_url=_trimmed(file_download.get("view_url")) or _trimmed(file_download.get("download_url")),
+                summary=_trimmed(file_download.get("summary")) or message or None,
+                operation_id=operation_id,
+            )
+        )
+
     show_completed_step_blocks = latest_pending is not None or state != "completed" or any(
         group.status in {"failed", "partial_failure"} for group in mutation_groups
     )
@@ -5322,6 +5383,7 @@ def _compose_blocks(
         and not sources
         and state == "completed"
         and not mutation_groups
+        and not file_download
     )
     diagnostic_kind = (
         presentation.kind in {"diagnostic", "cancelled", "rejected", "expired", "partial_failure"}
@@ -5401,6 +5463,9 @@ def compose_response_document(
             key=lambda group: _business_group_sort_key(group, approval_positions, business_order),
         )
     read_groups = _read_evidence(steps=steps, timeline=timeline, presentation=presentation, operation_id=operation_id)
+    file_download = _file_download_from_presentation(presentation)
+    if file_download:
+        read_groups = []
     raw_read_rows = _dedupe_rows([row for item in read_groups for row in item.rows if not _is_empty_result_envelope(row)])
     status_result = _status_result_from_read_rows(raw_read_rows, operation_id=operation_id, session=session)
     read_policy = _read_display_policy(
@@ -5490,7 +5555,7 @@ def compose_response_document(
     read_shape = "status" if status_result else _read_result_shape(read_rows) if read_rows or presentation.kind == "answer" else None
     diagnostics = _sanitize_diagnostic_value(dict(presentation.diagnostics if isinstance(presentation.diagnostics, dict) else {}))
     diagnostics.update(_planner_owned_response_document_diagnostics(session))
-    if presentation.kind == "answer" and state == "completed" and not read_rows and not sources and not mutation_groups:
+    if presentation.kind == "answer" and state == "completed" and not read_rows and not sources and not mutation_groups and not file_download:
         diagnostics["reason"] = "no_results"
     if failure_profile is not None:
         diagnostics = {
@@ -5545,6 +5610,8 @@ def compose_response_document(
         "knowledge_answer_contract": KNOWLEDGE_ANSWER_CONTRACT if presentation.kind == "knowledge_answer" else None,
         "source_list_contract": SOURCE_LIST_CONTRACT if sources else None,
         "source_locator_contract": SOURCE_LOCATOR_CONTRACT if sources else None,
+        "file_download_contract": "file_download_v1" if file_download else None,
+        "file_download_content_type": file_download.get("content_type") if file_download else None,
         "failure_reason": failure_profile.reason if failure_profile else None,
         "orphan_turn_state": (
             failure_profile.reason == "orphan_turn_state"

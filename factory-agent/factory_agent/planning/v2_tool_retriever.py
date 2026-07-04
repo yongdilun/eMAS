@@ -108,6 +108,7 @@ class V2CapabilityToolRetriever:
         backend_used = getattr(selection, "backend_used", "retrieval")
         llm_calls = int(getattr(selection, "llm_calls", 0) or 0)
         selected_names = _unique_existing(selection.tool_names, tools, limit=effective_max_candidates)
+        selected_names = _filter_selected_names_for_adapter_request(adapter_request, selected_names, tools)
         selected_names, metadata_completion = _ensure_capability_candidates(
             adapter_request,
             selected_names,
@@ -245,6 +246,21 @@ def _unique_existing(names: list[str], tools_by_name: Mapping[str, ToolInfo], *,
         if len(selected) >= limit:
             break
     return selected
+
+
+def _filter_selected_names_for_adapter_request(
+    adapter_request: ToolSelectorAdapterRequest,
+    selected_names: list[str],
+    tools_by_name: Mapping[str, ToolInfo],
+) -> list[str]:
+    if adapter_request.source_of_truth != "operational_state" or adapter_request.safety != "read_only":
+        return selected_names
+    matching = [
+        name
+        for name in selected_names
+        if name in tools_by_name and _tool_satisfies_adapter_request(tools_by_name[name], adapter_request)
+    ]
+    return matching if matching else selected_names
 
 
 def _ensure_capability_candidates(
@@ -826,6 +842,8 @@ def _output_contract_for_tool(
     tags = {_normalized_tag(tag) for tag in tool.capability_tags or []}
     if source_hint == "document_knowledge" or tags & _DOCUMENT_KNOWLEDGE_TAGS:
         return "knowledge_answer_v1"
+    if _tool_returns_pdf(tool):
+        return "file_download_v1"
     if "entity_status_v1" in tags or ("status" in tags and "read_one" in actions):
         return "entity_status_v1"
     if "result_collection_v1" in tags or "list" in actions or "read_many" in actions:
@@ -833,6 +851,16 @@ def _output_contract_for_tool(
     if "business_change_v1" in tags or any(action in actions for action in ("create", "update", "approve", "reject", "cancel")):
         return "business_change_v1"
     return None
+
+
+def _tool_returns_pdf(tool: ToolInfo) -> bool:
+    content_types = []
+    if isinstance(tool.output_schema, dict):
+        content_types = list(tool.output_schema.get("x-response-content-types") or [])
+    if any(str(item).split(";")[0].strip().lower() == "application/pdf" for item in content_types):
+        return True
+    tags = {_normalized_tag(tag) for tag in tool.capability_tags or []}
+    return "pdf" in tags
 
 
 def _is_reschedule_all_tool(tool: ToolInfo) -> bool:

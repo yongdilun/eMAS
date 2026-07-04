@@ -1,51 +1,82 @@
-const ProductionOutputChart = () => {
- return (
- <div className="flex min-h-[120px] flex-1 flex-col gap-3 py-2">
- <svg
- fill="none"
- height="100"
- preserveAspectRatio="none"
- viewBox="-3 0 478 150"
- width="100%"
- xmlns="http://www.w3.org/2000/svg"
- >
- <path
- d="M0 109C18.1538 109 18.1538 21 36.3077 21C54.4615 21 54.4615 41 72.6154 41C90.7692 41 90.7692 93 108.923 93C127.077 93 127.077 33 145.231 33C163.385 33 163.385 101 181.538 101C199.692 101 199.692 61 217.846 61C236 61 236 45 254.154 45C272.308 45 272.308 121 290.462 121C308.615 121 308.615 149 326.769 149C344.923 149 344.923 1 363.077 1C381.231 1 381.231 81 399.385 81C417.538 81 417.538 129 435.692 129C453.846 129 453.846 25 472 25V149H326.769H0V109Z"
- fill="url(#paint0_linear_1131_5935)"
- />
- <path
- d="M0 109C18.1538 109 18.1538 21 36.3077 21C54.4615 21 54.4615 41 72.6154 41C90.7692 41 90.7692 93 108.923 93C127.077 93 127.077 33 145.231 33C163.385 33 163.385 101 181.538 101C199.692 101 199.692 61 217.846 61C236 61 236 45 254.154 45C272.308 45 272.308 121 290.462 121C308.615 121 308.615 149 326.769 149C344.923 149 344.923 1 363.077 1C381.231 1 381.231 81 399.385 81C417.538 81 417.538 129 435.692 129C453.846 129 453.846 25 472 25"
- stroke="#5e6ad2"
- strokeLinecap="round"
- strokeWidth="3.5"
- />
- <defs>
- <linearGradient
- gradientUnits="userSpaceOnUse"
- id="paint0_linear_1131_5935"
- x1="236"
- x2="236"
- y1="1"
- y2="149"
- >
- <stop stopColor="#5e6ad2" stopOpacity="0.4" />
- <stop offset="1" stopColor="#5e6ad2" stopOpacity="0.05" />
- </linearGradient>
- </defs>
- </svg>
- <div className="flex justify-around mt-1">
- {['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map((day) => (
- <p
- key={day}
- className="text-ink-muted text-caption"
- >
- {day}
- </p>
- ))}
- </div>
- </div>
- )
+const unwrapArr = (d) => {
+  if (!d) return []
+  if (Array.isArray(d)) return d
+  if (Array.isArray(d.data)) return d.data
+  if (d.data && Array.isArray(d.data.data)) return d.data.data
+  return []
+}
+
+const labelFor = (row) => {
+  const raw = row.date || row.start_time || row.slot_id || row.machine_id || ''
+  if (!raw) return 'Data'
+  const date = new Date(raw)
+  if (!Number.isNaN(date.getTime())) {
+    return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+  }
+  return String(raw)
+}
+
+const ProductionOutputChart = ({ data }) => {
+  const rows = unwrapArr(data)
+    .map(row => ({
+      label: labelFor(row),
+      value: Number(row.quantity_produced ?? row.produced ?? row.total_output ?? row.units ?? 0),
+    }))
+    .filter(row => row.value > 0)
+    .slice(-8)
+
+  if (rows.length === 0) {
+    return (
+      <div className="flex min-h-[150px] items-center justify-center rounded-lg border border-dashed border-hairline text-sm text-ink-muted">
+        No production data
+      </div>
+    )
+  }
+
+  const max = Math.max(...rows.map(row => row.value), 1)
+  const width = 360
+  const height = 150
+  const padX = 18
+  const padY = 14
+  const gap = 10
+  const barWidth = Math.max(12, (width - padX * 2 - gap * (rows.length - 1)) / rows.length)
+
+  return (
+    <div className="flex min-h-[150px] flex-1 flex-col gap-3 py-2">
+      <svg
+        fill="none"
+        height="120"
+        preserveAspectRatio="none"
+        viewBox={`0 0 ${width} ${height}`}
+        width="100%"
+        xmlns="http://www.w3.org/2000/svg"
+        role="img"
+        aria-label="Production output chart"
+      >
+        <line x1={padX} x2={width - padX} y1={height - padY} y2={height - padY} stroke="currentColor" className="text-hairline" />
+        {rows.map((row, idx) => {
+          const x = padX + idx * (barWidth + gap)
+          const barHeight = Math.max(4, ((height - padY * 2) * row.value) / max)
+          const y = height - padY - barHeight
+          return (
+            <g key={`${row.label}-${idx}`}>
+              <rect x={x} y={y} width={barWidth} height={barHeight} rx="3" fill="#5e6ad2" />
+              <text x={x + barWidth / 2} y={Math.max(12, y - 5)} textAnchor="middle" className="fill-ink-muted text-[10px]">
+                {row.value}
+              </text>
+            </g>
+          )
+        })}
+      </svg>
+      <div className="grid gap-1" style={{ gridTemplateColumns: `repeat(${rows.length}, minmax(0, 1fr))` }}>
+        {rows.map((row, idx) => (
+          <p key={`${row.label}-label-${idx}`} className="truncate text-center text-ink-muted text-caption">
+            {row.label}
+          </p>
+        ))}
+      </div>
+    </div>
+  )
 }
 
 export default ProductionOutputChart
-

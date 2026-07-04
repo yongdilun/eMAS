@@ -538,6 +538,219 @@ def test_replan_spine_activity_steps_collapse_noisy_retry_attempts():
     assert "Attempt 6 of 6" in (steps[-1].detail or "")
 
 
+def test_replan_limit_activity_keeps_retry_story_over_stale_approval_projection():
+    created_at = datetime(2026, 5, 13, 10, 5, 0)
+    attempts = []
+    for attempt in range(1, 6):
+        attempts.append(
+            {
+                "attempt": attempt,
+                "missing_evidence_reasons": [{"reason": "tool_error", "requirement_id": "req-001"}],
+                "failed_tool_calls": [
+                    {
+                        "tool_name": "get__machines_{id}",
+                        "args": {"id": "M-CNC-01", "fields": "status"},
+                        "requirement_id": "req-001",
+                        "reason": "tool_error",
+                        "attempt": attempt,
+                    }
+                ],
+            }
+        )
+    replan_spine = {
+        "attempt_count": 5,
+        "max_attempts": 5,
+        "replan_limit_reached": True,
+        "attempts": attempts,
+        "missing_evidence_reasons": [{"reason": "tool_error", "requirement_id": "req-001"}],
+        "failed_tool_calls": attempts[-1]["failed_tool_calls"],
+    }
+    live_rows = [
+        {
+            "id": f"graph:{idx:06d}:{node}",
+            "timestamp": int((created_at + timedelta(seconds=idx)).timestamp()),
+            "order": idx,
+            "group": group,
+            "label": label,
+            "detail": detail,
+            "state": "running",
+        }
+        for idx, (node, group, label, detail) in enumerate(
+            [
+                ("semantic_intake_node", "planning", "Understood request", "Reviewing your request and recent context"),
+                ("requirement_ledger_node", "planning", "Structuring request", "Structuring the request"),
+                ("tool_retrieval_node", "planning", "Finding information path", "Finding the right information path"),
+                ("planner_choose_tool_node", "action", "Selecting safe action", "Selecting a safe action"),
+                ("write_staging_node", "approval", "Preparing write approval", "Building the exact write set before approval"),
+                ("approval_gate_node", "approval", "Waiting for your approval", "Approval is required before committing staged changes"),
+            ],
+            start=1,
+        )
+    ]
+    snapshot = SessionSnapshotResponse(
+        session={
+            "session_id": "activity-replan-limit-over-approval-projection",
+            "user_id": "u1",
+            "status": "BLOCKED",
+            "plan_version": 1,
+            "current_step_index": 0,
+            "step_count": 1,
+            "replan_count": 5,
+            "llm_call_count": 1,
+            "session_started_at": created_at,
+            "created_at": created_at,
+            "updated_at": created_at + timedelta(seconds=40),
+            "replan_context": {
+                "live_activity_steps": live_rows,
+                "intent_contract": {"replan_spine": replan_spine},
+                "planner_owned_agent_graph": {
+                    "dependency_plan": {
+                        "requirements": [{"requirement_id": "req-approval", "label": "approval_required"}]
+                    },
+                    "response_document_context": {
+                        "state": "failed",
+                        "diagnostics": {
+                            "summary": "I could not verify the requested evidence after bounded retries.",
+                            "replan_limit_reached": True,
+                            "replan_spine": replan_spine,
+                        },
+                    },
+                },
+            },
+        },
+        timeline=[
+            TimelineEventResponse(
+                event_id="plan:replan-limit-approval-projection",
+                event_type="plan_created",
+                content="Check machine status",
+                created_at=created_at + timedelta(seconds=1),
+                status="PLANNING",
+            ),
+            TimelineEventResponse(
+                event_id="blocked:replan-limit-approval-projection",
+                event_type="session_blocked",
+                content="Evidence could not be verified.",
+                created_at=created_at + timedelta(seconds=39),
+                status="BLOCKED",
+            ),
+        ],
+    )
+
+    steps = _activity_steps_for_snapshot(snapshot)
+    labels = [step.label for step in steps]
+
+    assert "Earlier retry attempts" in labels
+    assert "Waiting for your approval" not in labels
+    assert "Prepared change preview" not in labels
+    assert "Attempt 6 of 6" in (steps[-1].detail or "")
+
+
+def test_replan_recovery_activity_keeps_retry_story_over_stale_approval_projection():
+    created_at = datetime(2026, 5, 13, 10, 12, 0)
+    replan_spine = {
+        "attempt_count": 1,
+        "max_attempts": 5,
+        "replan_limit_reached": False,
+        "attempts": [
+            {
+                "attempt": 1,
+                "missing_evidence_reasons": [{"reason": "tool_error", "requirement_id": "req-001"}],
+                "failed_tool_calls": [
+                    {
+                        "tool_name": "get__jobs",
+                        "args": {"priority": "low", "fields": "job_id,deadline"},
+                        "requirement_id": "req-001",
+                        "reason": "tool_error",
+                        "error_type": "timeout",
+                        "attempt": 1,
+                    }
+                ],
+            }
+        ],
+        "missing_evidence_reasons": [{"reason": "tool_error", "requirement_id": "req-001"}],
+        "failed_tool_calls": [
+            {
+                "tool_name": "get__jobs",
+                "args": {"priority": "low", "fields": "job_id,deadline"},
+                "requirement_id": "req-001",
+                "reason": "tool_error",
+                "error_type": "timeout",
+                "attempt": 1,
+            }
+        ],
+    }
+    live_rows = [
+        {
+            "id": f"graph:{idx:06d}:{node}",
+            "timestamp": int((created_at + timedelta(seconds=idx)).timestamp()),
+            "order": idx,
+            "group": group,
+            "label": label,
+            "detail": detail,
+            "state": "running",
+        }
+        for idx, (node, group, label, detail) in enumerate(
+            [
+                ("semantic_intake_node", "planning", "Understood request", "Reviewing your request and recent context"),
+                ("write_staging_node", "approval", "Preparing write approval", "Building the exact write set before approval"),
+                ("approval_gate_node", "approval", "Waiting for your approval", "Approval is required before committing staged changes"),
+            ],
+            start=1,
+        )
+    ]
+    snapshot = SessionSnapshotResponse(
+        session={
+            "session_id": "activity-replan-recovery-over-approval-projection",
+            "user_id": "u1",
+            "status": "COMPLETED",
+            "plan_version": 1,
+            "current_step_index": 0,
+            "step_count": 1,
+            "replan_count": 1,
+            "llm_call_count": 1,
+            "session_started_at": created_at,
+            "created_at": created_at,
+            "updated_at": created_at + timedelta(seconds=30),
+            "replan_context": {
+                "live_activity_steps": live_rows,
+                "intent_contract": {"replan_spine": replan_spine},
+                "planner_owned_agent_graph": {
+                    "dependency_plan": {
+                        "requirements": [{"requirement_id": "req-approval", "label": "approval_required"}]
+                    },
+                },
+            },
+        },
+        timeline=[
+            TimelineEventResponse(
+                event_id="plan:replan-recovery-approval-projection",
+                event_type="plan_created",
+                content="List low priority jobs.",
+                created_at=created_at + timedelta(seconds=1),
+                status="PLANNING",
+            ),
+            TimelineEventResponse(
+                event_id="completed:replan-recovery-approval-projection",
+                event_type="session_completed",
+                content="Found 3 low-priority jobs sorted by deadline.",
+                created_at=created_at + timedelta(seconds=29),
+                status="COMPLETED",
+            ),
+        ],
+    )
+
+    steps = _activity_steps_for_snapshot(snapshot)
+    labels = [step.label for step in steps]
+
+    assert "Running selected tool" in labels
+    assert "Checking evidence" in labels
+    assert "Replanning after timeout" in labels
+    assert any(label.startswith("Retrying ") for label in labels)
+    assert "Checking new evidence" in labels
+    assert "Waiting for your approval" not in labels
+    assert "Attempt 2 of 6" in " ".join(step.detail or "" for step in steps)
+
+
 def test_active_replan_spine_activity_uses_attempt_story_instead_of_jumpy_live_graph_rows():
     created_at = datetime(2026, 5, 13, 9, 50, 0)
     attempts = []

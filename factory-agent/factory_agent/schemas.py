@@ -566,6 +566,17 @@ class SourceListBlock(ResponseBlockBase):
     operation_id: str | None = None
 
 
+class FileDownloadBlock(ResponseBlockBase):
+    type: Literal["file_download"] = "file_download"
+    title: str = Field(default="Download file", min_length=1)
+    filename: str = Field(min_length=1)
+    content_type: str = Field(min_length=1)
+    download_url: str = Field(min_length=1)
+    view_url: str | None = None
+    summary: str | None = None
+    operation_id: str | None = None
+
+
 class DiagnosticBlock(ResponseBlockBase):
     type: Literal["diagnostic"] = "diagnostic"
     severity: Literal["info", "warning", "error"] = "error"
@@ -595,6 +606,7 @@ ResponseBlock = Annotated[
     | KnowledgeAnswerBlock
     | SafetyNoticeBlock
     | SourceListBlock
+    | FileDownloadBlock
     | DiagnosticBlock,
     Field(discriminator="type"),
 ]

@@ -1,0 +1,4 @@
+=== RUN   TestAPIContractGoldenInventory
+--- PASS: TestAPIContractGoldenInventory (0.51s)
+PASS
+ok  	emas/internal/handler	0.774s

@@ -4,6 +4,12 @@ import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..')
+const testArtifactWatchIgnores = [
+  '**/playwright-output/**',
+  '**/playwright-report/**',
+  '**/test-results/**',
+  '**/.playwright-artifacts-*/**',
+]
 
 const args = new Map()
 for (let i = 2; i < process.argv.length; i += 2) {
@@ -54,6 +60,9 @@ const server = await createServer({
     host: '127.0.0.1',
     port,
     strictPort: true,
+    watch: {
+      ignored: testArtifactWatchIgnores,
+    },
     fs: {
       allow: [repoRoot],
     },

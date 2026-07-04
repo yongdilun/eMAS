@@ -45,6 +45,7 @@ BENCHMARK_ROOT = Path(__file__).resolve().parent
 CASE_DIR = BENCHMARK_ROOT / "cases"
 BASELINE_DIR = BENCHMARK_ROOT / "baselines"
 REPORT_DIR = BENCHMARK_ROOT / "reports"
+REPORT_DIR_ENV = "FACTORY_AGENT_NODE_BENCHMARK_REPORT_DIR"
 
 VALID_NODES = (
     "semantic_intake_node",
@@ -61,6 +62,121 @@ VALID_NODES = (
 )
 
 PENDING_EXECUTION_KEY = "phase5_pending_tool_execution"
+
+AUTONOMY_SCORE_VERSION = 1
+AUTONOMY_SIGNAL_VALUES = {
+    "ambiguity",
+    "candidate_conflict",
+    "conditional",
+    "cross_entity",
+    "cross_source",
+    "dependency_blocked",
+    "fail_closed",
+    "failure_recovery",
+    "formatting",
+    "llm_choice",
+    "llm_repair",
+    "llm_reranker",
+    "live_llm",
+    "missing_entity",
+    "mocked_autonomous",
+    "multi_intent",
+    "multi_step",
+    "parallel",
+    "replan",
+    "schema_validation",
+    "stale_evidence",
+    "unsafe_mutation",
+    "validation_rejection",
+    "write_approval",
+}
+AUTONOMY_SAFETY_CAPS = {
+    "read_only",
+    "approval_required",
+    "deterministic_only",
+    "no_autonomous_action",
+}
+AUTONOMY_RECOMMENDATIONS = {
+    "keep_deterministic",
+    "observe",
+    "guarded_pilot",
+    "upgrade_candidate",
+    "do_not_autonomize",
+}
+AUTONOMY_SAFETY_CAP_RANK = {
+    "read_only": 0,
+    "approval_required": 1,
+    "deterministic_only": 2,
+    "no_autonomous_action": 3,
+}
+NO_AUTONOMOUS_ACTION_NODES = {
+    "approval_node",
+    "finalize_node",
+    "response_document_node",
+    "tool_execution_node",
+}
+DETERMINISTIC_ONLY_NODES = {
+    "evidence_observation_node",
+    "requirement_ledger_node",
+    "satisfaction_node",
+}
+STRONGLY_BOUNDED_LLM_NODES = {
+    "semantic_intake_node",
+    "planner_decision_node",
+    "planner_choose_tool_node",
+    "tool_retrieval_node",
+}
+NODE_GUARDABILITY_BASE = {
+    "semantic_intake_node": 18,
+    "requirement_ledger_node": 15,
+    "planner_decision_node": 20,
+    "tool_retrieval_node": 18,
+    "planner_choose_tool_node": 20,
+    "tool_execution_node": 8,
+    "evidence_observation_node": 16,
+    "satisfaction_node": 16,
+    "approval_node": 10,
+    "finalize_node": 12,
+    "response_document_node": 12,
+}
+COMPLEXITY_SIGNALS = {
+    "ambiguity",
+    "candidate_conflict",
+    "conditional",
+    "cross_entity",
+    "cross_source",
+    "dependency_blocked",
+    "missing_entity",
+    "multi_intent",
+    "multi_step",
+    "parallel",
+    "unsafe_mutation",
+    "write_approval",
+}
+BRITTLENESS_SIGNALS = {
+    "dependency_blocked",
+    "fail_closed",
+    "failure_recovery",
+    "llm_repair",
+    "missing_entity",
+    "replan",
+    "schema_validation",
+    "stale_evidence",
+    "validation_rejection",
+}
+LLM_LIFT_SIGNALS = {
+    "candidate_conflict",
+    "llm_choice",
+    "llm_repair",
+    "llm_reranker",
+    "live_llm",
+    "mocked_autonomous",
+}
+GUARDABILITY_SIGNALS = {
+    "fail_closed",
+    "schema_validation",
+    "validation_rejection",
+}
 
 
 class NodeBenchmarkCaseError(AssertionError):
@@ -119,8 +235,27 @@ class FakeRAGPipeline:
         return result
 
 
+def _env_truthy(name: str, default: str = "0") -> bool:
+    return os.getenv(name, default).strip().lower() in {"1", "true", "yes"}
+
+
 def env_enabled() -> bool:
-    return os.getenv("FACTORY_AGENT_RUN_NODE_BENCHMARKS", "0").strip().lower() in {"1", "true", "yes"}
+    return _env_truthy("FACTORY_AGENT_RUN_NODE_BENCHMARKS")
+
+
+def scorecard_enabled() -> bool:
+    return _env_truthy("FACTORY_AGENT_NODE_BENCHMARK_SCORECARD")
+
+
+def live_llm_benchmark_enabled() -> bool:
+    return _env_truthy("FACTORY_AGENT_NODE_BENCHMARK_LIVE_LLM")
+
+
+def benchmark_report_dir() -> Path:
+    configured = os.getenv(REPORT_DIR_ENV, "").strip()
+    if configured:
+        return Path(configured).expanduser().resolve()
+    return REPORT_DIR
 
 
 def selected_node() -> str:
@@ -128,7 +263,7 @@ def selected_node() -> str:
 
 
 def update_baseline_enabled() -> bool:
-    return os.getenv("FACTORY_AGENT_NODE_BENCHMARK_UPDATE_BASELINE", "0").strip().lower() in {"1", "true", "yes"}
+    return _env_truthy("FACTORY_AGENT_NODE_BENCHMARK_UPDATE_BASELINE")
 
 
 def load_cases(node: str | None = None) -> list[dict[str, Any]]:
@@ -163,9 +298,32 @@ def load_cases(node: str | None = None) -> list[dict[str, Any]]:
                 raise NodeBenchmarkCaseError(f"{case_id} is missing behavior label")
             if not isinstance(expected, list) or not expected:
                 raise NodeBenchmarkCaseError(f"{case_id} must declare expected_evidence paths")
+            _validate_autonomy_probe(case_id, case.get("autonomy_probe"))
             seen_ids.add(case_id)
             cases.append(case)
     return cases
+
+
+def _validate_autonomy_probe(case_id: str, probe: Any) -> None:
+    if probe is None:
+        return
+    if not isinstance(probe, Mapping):
+        raise NodeBenchmarkCaseError(f"{case_id} autonomy_probe must be an object")
+    signals = probe.get("signals", [])
+    if signals is not None:
+        if not isinstance(signals, list) or any(not isinstance(item, str) for item in signals):
+            raise NodeBenchmarkCaseError(f"{case_id} autonomy_probe.signals must be a list of strings")
+        unknown = sorted({item for item in signals if _normalize_signal(item) not in AUTONOMY_SIGNAL_VALUES})
+        if unknown:
+            raise NodeBenchmarkCaseError(f"{case_id} has unknown autonomy_probe.signals: {unknown}")
+    safety_cap = probe.get("safety_cap")
+    if safety_cap is not None and safety_cap not in AUTONOMY_SAFETY_CAPS:
+        raise NodeBenchmarkCaseError(f"{case_id} has unknown autonomy_probe.safety_cap: {safety_cap}")
+    expected = probe.get("expected_recommendation")
+    if expected is not None and expected not in AUTONOMY_RECOMMENDATIONS:
+        raise NodeBenchmarkCaseError(
+            f"{case_id} has unknown autonomy_probe.expected_recommendation: {expected}"
+        )
 
 
 def load_xfail_baseline(node: str) -> dict[str, Any]:
@@ -251,10 +409,11 @@ def assert_benchmark_result(result: Mapping[str, Any]) -> None:
 
 def _settings_for_case(case: Mapping[str, Any]):
     fixture = case.get("fixture") if isinstance(case.get("fixture"), Mapping) else {}
+    live_llm = live_llm_benchmark_enabled()
     settings = replace(
         get_settings(),
         graph_checkpoint_backend="off",
-        allow_offline_planner_proposer=False,
+        allow_offline_planner_proposer=not live_llm,
         tool_selector_backend="retrieval",
         tool_selector_top_k=10,
         tool_selector_candidate_pool=20,
@@ -264,12 +423,25 @@ def _settings_for_case(case: Mapping[str, Any]):
         http_timeout_s=1.0,
         max_replans=int(fixture.get("max_replans", 2)),
     )
+    if not live_llm:
+        settings = replace(
+            settings,
+            openai_base_url=None,
+            openai_api_key=None,
+            planner_openai_base_url=None,
+            semantic_intake_openai_base_url=None,
+            summary_openai_base_url=None,
+            tool_result_summary_openai_base_url=None,
+            tool_selector_openai_base_url=None,
+        )
     if fixture.get("clear_planner_provider"):
         settings = replace(
             settings,
             openai_api_key="",
+            openai_base_url=None,
             planner_openai_base_url=None,
             semantic_intake_openai_base_url=None,
+            allow_offline_planner_proposer=False,
         )
     return settings
 
@@ -1045,10 +1217,411 @@ def _path_get(value: Any, path: str) -> Any:
     return current
 
 
+def build_autonomy_scorecard(
+    cases: list[Mapping[str, Any]],
+    *,
+    results_by_node: Mapping[str, list[Mapping[str, Any]]] | None = None,
+    live_llm_enabled: bool | None = None,
+    generated_at: datetime | None = None,
+) -> dict[str, Any]:
+    result_map = dict(results_by_node or _load_results_by_node(benchmark_report_dir()))
+    live_enabled = live_llm_benchmark_enabled() if live_llm_enabled is None else live_llm_enabled
+    grouped_cases: dict[str, list[Mapping[str, Any]]] = {}
+    for case in cases:
+        grouped_cases.setdefault(str(case["node"]), []).append(case)
+
+    nodes = {
+        node: _score_autonomy_node(
+            node=node,
+            cases=grouped_cases[node],
+            results=result_map.get(node, []),
+            live_llm_enabled=live_enabled,
+        )
+        for node in sorted(grouped_cases)
+    }
+    recommendation_counts: dict[str, int] = {}
+    for node_result in nodes.values():
+        recommendation = str(node_result["recommendation"])
+        recommendation_counts[recommendation] = recommendation_counts.get(recommendation, 0) + 1
+    return {
+        "generated_at": (generated_at or datetime.now(timezone.utc)).isoformat(),
+        "score_version": AUTONOMY_SCORE_VERSION,
+        "live_llm_enabled": live_enabled,
+        "selected_node": selected_node(),
+        "node_count": len(nodes),
+        "summary": {
+            "recommendation_counts": recommendation_counts,
+            "upgrade_candidates": [
+                node for node, item in nodes.items() if item["recommendation"] == "upgrade_candidate"
+            ],
+            "guarded_pilots": [
+                node for node, item in nodes.items() if item["recommendation"] == "guarded_pilot"
+            ],
+            "do_not_autonomize": [
+                node for node, item in nodes.items() if item["recommendation"] == "do_not_autonomize"
+            ],
+        },
+        "nodes": nodes,
+    }
+
+
+def write_autonomy_scorecard(
+    cases: list[Mapping[str, Any]],
+    *,
+    results_by_node: Mapping[str, list[Mapping[str, Any]]] | None = None,
+    report_dir: str | Path | None = None,
+    live_llm_enabled: bool | None = None,
+) -> dict[str, Any]:
+    target_dir = Path(report_dir).expanduser().resolve() if report_dir is not None else benchmark_report_dir()
+    payload = build_autonomy_scorecard(
+        cases,
+        results_by_node=results_by_node or _load_results_by_node(target_dir),
+        live_llm_enabled=live_llm_enabled,
+    )
+    target_dir.mkdir(parents=True, exist_ok=True)
+    _atomic_write_text(
+        target_dir / "autonomy_scorecard.latest.json",
+        json.dumps(payload, default=_json_default, indent=2, sort_keys=True) + "\n",
+    )
+    _write_autonomy_scorecard_markdown(target_dir / "autonomy_scorecard.md", payload)
+    return payload
+
+
+def _score_autonomy_node(
+    *,
+    node: str,
+    cases: list[Mapping[str, Any]],
+    results: list[Mapping[str, Any]],
+    live_llm_enabled: bool,
+) -> dict[str, Any]:
+    probes = [_autonomy_probe_for_case(case) for case in cases]
+    signals = sorted({signal for probe in probes for signal in probe["signals"]})
+    safety_cap = _combined_safety_cap(node, probes)
+    result_by_id = {str(result.get("id")): result for result in results}
+    completed_results = [result_by_id[str(case["id"])] for case in cases if str(case["id"]) in result_by_id]
+    passed_results = [result for result in completed_results if result.get("status") == "passed"]
+    pass_rate = len(passed_results) / len(completed_results) if completed_results else 0.0
+
+    complexity_pressure = _complexity_pressure(signals, cases)
+    deterministic_brittleness = _deterministic_brittleness(signals, cases, completed_results, pass_rate)
+    llm_lift_signal = _llm_lift_signal(node, signals, completed_results, live_llm_enabled)
+    guardability = _guardability(node, signals, pass_rate)
+    score = min(100, complexity_pressure + deterministic_brittleness + llm_lift_signal + guardability)
+    recommendation = _autonomy_recommendation(
+        node=node,
+        score=score,
+        safety_cap=safety_cap,
+        llm_lift_signal=llm_lift_signal,
+        guardability=guardability,
+    )
+    expected = sorted(
+        {
+            str(probe["expected_recommendation"])
+            for probe in probes
+            if probe.get("expected_recommendation")
+        }
+    )
+    reasons = _autonomy_reasons(
+        node=node,
+        signals=signals,
+        safety_cap=safety_cap,
+        recommendation=recommendation,
+        complexity_pressure=complexity_pressure,
+        deterministic_brittleness=deterministic_brittleness,
+        llm_lift_signal=llm_lift_signal,
+        guardability=guardability,
+        pass_rate=pass_rate,
+    )
+    return {
+        "node": node,
+        "case_count": len(cases),
+        "completed_case_count": len(completed_results),
+        "passed_case_count": len(passed_results),
+        "pass_rate": round(pass_rate, 4),
+        "score": score,
+        "complexity_pressure": complexity_pressure,
+        "deterministic_brittleness": deterministic_brittleness,
+        "llm_lift_signal": llm_lift_signal,
+        "guardability": guardability,
+        "safety_cap": safety_cap,
+        "recommendation": recommendation,
+        "signals": signals,
+        "expected_recommendations": expected,
+        "expectation_matched": None if not expected else recommendation in expected,
+        "reasons": reasons,
+    }
+
+
+def _autonomy_probe_for_case(case: Mapping[str, Any]) -> dict[str, Any]:
+    raw_probe = case.get("autonomy_probe") if isinstance(case.get("autonomy_probe"), Mapping) else {}
+    explicit_signals = {
+        _normalize_signal(signal)
+        for signal in (raw_probe.get("signals") or [])
+        if isinstance(signal, str)
+    }
+    signals = sorted((explicit_signals | _infer_autonomy_signals(case)) & AUTONOMY_SIGNAL_VALUES)
+    return {
+        "signals": signals,
+        "safety_cap": raw_probe.get("safety_cap") or _infer_safety_cap(case),
+        "expected_recommendation": raw_probe.get("expected_recommendation"),
+    }
+
+
+def _infer_autonomy_signals(case: Mapping[str, Any]) -> set[str]:
+    node = str(case.get("node") or "")
+    text = f"{case.get('behavior', '')} {case.get('prompt', '')}".lower()
+    signals: set[str] = set()
+    if any(token in text for token in ["ambiguous", "pronoun"]):
+        signals.add("ambiguity")
+    if any(token in text for token in ["candidate", "outside-window", "choice among", "reranker"]):
+        signals.add("candidate_conflict")
+    if any(token in text for token in ["conditional", " if ", " then "]):
+        signals.add("conditional")
+    if any(token in text for token in ["active job", "cross entity", "machine", "job"]):
+        if "then" in text or "active job" in text or "pronoun" in text:
+            signals.add("cross_entity")
+    if any(token in text for token in ["rag", "document", "loto", "procedure"]):
+        signals.add("cross_source")
+    if any(token in text for token in ["dependency"]):
+        signals.add("dependency_blocked")
+    if any(token in text for token in ["fail closed", "unsupported destructive", "invalid", "malformed"]):
+        signals.add("fail_closed")
+    if any(token in text for token in ["500", "404", "exception", "failed", "no-match", "no match", "missing tool"]):
+        signals.add("failure_recovery")
+    if "format" in text or "table" in text:
+        signals.add("formatting")
+    if "llm choice" in text or "choice among" in text:
+        signals.add("llm_choice")
+    if "llm" in text and ("repair" in text or "fallback" in text):
+        signals.add("llm_repair")
+    if node in {"planner_decision_node", "planner_choose_tool_node"} and any(
+        token in text
+        for token in ["decision", "revise", "clarification", "malformed", "no llm", "outside-window"]
+    ):
+        signals.add("mocked_autonomous")
+    if "reranker" in text:
+        signals.add("llm_reranker")
+    if "missing" in text or "clarification" in text:
+        signals.add("missing_entity")
+    if "multi-intent" in text or "cascade" in text:
+        signals.add("multi_intent")
+    if any(token in text for token in ["multi", " then ", "follow-up", "second"]):
+        signals.add("multi_step")
+    if "parallel" in text:
+        signals.add("parallel")
+    if "replan" in text or "retry" in text:
+        signals.add("replan")
+    if "schema" in text or "malformed" in text:
+        signals.add("schema_validation")
+    if "stale" in text:
+        signals.add("stale_evidence")
+    if any(token in text for token in ["unsafe", "destructive"]):
+        signals.add("unsafe_mutation")
+    if "rejection" in text or "outside-window" in text or "invalid" in text:
+        signals.add("validation_rejection")
+    if any(token in text for token in ["write", "mutation", "approval", "change job", "priority", "reschedule", "create"]):
+        signals.add("write_approval")
+    return signals
+
+
+def _normalize_signal(signal: str) -> str:
+    return signal.strip().lower().replace("-", "_").replace(" ", "_")
+
+
+def _infer_safety_cap(case: Mapping[str, Any]) -> str:
+    node = str(case.get("node") or "")
+    if node in NO_AUTONOMOUS_ACTION_NODES:
+        return "no_autonomous_action"
+    if node in DETERMINISTIC_ONLY_NODES:
+        return "deterministic_only"
+    if node in {"semantic_intake_node", "tool_retrieval_node"}:
+        return "read_only"
+    text = f"{case.get('behavior', '')} {case.get('prompt', '')}".lower()
+    if any(token in text for token in ["write", "mutation", "approval", "change job", "reschedule", "create"]):
+        return "approval_required"
+    return "read_only"
+
+
+def _combined_safety_cap(node: str, probes: list[Mapping[str, Any]]) -> str:
+    if node in NO_AUTONOMOUS_ACTION_NODES:
+        return "no_autonomous_action"
+    if node in DETERMINISTIC_ONLY_NODES:
+        return "deterministic_only"
+    caps = [str(probe.get("safety_cap") or "read_only") for probe in probes]
+    return max(caps or ["read_only"], key=lambda cap: AUTONOMY_SAFETY_CAP_RANK.get(cap, 0))
+
+
+def _complexity_pressure(signals: list[str], cases: list[Mapping[str, Any]]) -> int:
+    signal_score = 5 * len(set(signals) & COMPLEXITY_SIGNALS)
+    multi_case_bonus = 5 if len(cases) >= 5 else 0
+    return min(30, signal_score + multi_case_bonus)
+
+
+def _deterministic_brittleness(
+    signals: list[str],
+    cases: list[Mapping[str, Any]],
+    results: list[Mapping[str, Any]],
+    pass_rate: float,
+) -> int:
+    signal_score = 4 * len(set(signals) & BRITTLENESS_SIGNALS)
+    shallow_assertion_cases = [
+        case
+        for case in cases
+        if len(case.get("expected_evidence") or []) <= 2
+        and not case.get("expected_equals")
+        and not case.get("expected_contains")
+    ]
+    shallow_score = 5 if shallow_assertion_cases and len(shallow_assertion_cases) / len(cases) >= 0.5 else 0
+    failure_score = int(round((1.0 - pass_rate) * 15)) if results else 0
+    rejection_score = 5 if any(_result_has_validation_rejection(result) for result in results) else 0
+    return min(25, signal_score + shallow_score + failure_score + rejection_score)
+
+
+def _llm_lift_signal(
+    node: str,
+    signals: list[str],
+    results: list[Mapping[str, Any]],
+    live_llm_enabled: bool,
+) -> int:
+    signal_score = 8 * len(set(signals) & LLM_LIFT_SIGNALS)
+    capable_bonus = 7 if node in STRONGLY_BOUNDED_LLM_NODES and signal_score else 0
+    live_bonus = 0
+    if live_llm_enabled and any(_result_has_real_llm(result) and result.get("status") == "passed" for result in results):
+        live_bonus = 8
+    return min(25, signal_score + capable_bonus + live_bonus)
+
+
+def _guardability(node: str, signals: list[str], pass_rate: float) -> int:
+    base = NODE_GUARDABILITY_BASE.get(node, 10)
+    signal_bonus = 2 if set(signals) & GUARDABILITY_SIGNALS else 0
+    failure_penalty = int(round((1.0 - pass_rate) * 8)) if pass_rate else 0
+    return max(0, min(20, base + signal_bonus - failure_penalty))
+
+
+def _autonomy_recommendation(
+    *,
+    node: str,
+    score: int,
+    safety_cap: str,
+    llm_lift_signal: int,
+    guardability: int,
+) -> str:
+    if safety_cap == "no_autonomous_action":
+        return "do_not_autonomize"
+    if safety_cap == "deterministic_only":
+        return "observe" if score >= 35 else "keep_deterministic"
+    strongly_bounded = node in STRONGLY_BOUNDED_LLM_NODES and guardability >= 18
+    if score >= 75 and llm_lift_signal > 0 and safety_cap == "read_only" and strongly_bounded:
+        return "upgrade_candidate"
+    if score >= 55 and llm_lift_signal > 0:
+        return "guarded_pilot"
+    if score >= 35:
+        return "observe"
+    return "keep_deterministic"
+
+
+def _autonomy_reasons(
+    *,
+    node: str,
+    signals: list[str],
+    safety_cap: str,
+    recommendation: str,
+    complexity_pressure: int,
+    deterministic_brittleness: int,
+    llm_lift_signal: int,
+    guardability: int,
+    pass_rate: float,
+) -> list[str]:
+    reasons: list[str] = []
+    if safety_cap == "no_autonomous_action":
+        reasons.append("Node owns execution or final authority; autonomous behavior should not bypass deterministic control.")
+    elif safety_cap == "deterministic_only":
+        reasons.append("Node is a deterministic validation/projection layer; use score as observation signal only.")
+    elif safety_cap == "approval_required":
+        reasons.append("Write or approval behavior requires a guarded pilot instead of direct autonomy.")
+    if complexity_pressure >= 20:
+        reasons.append("Scenario set has high complexity pressure.")
+    if deterministic_brittleness >= 15:
+        reasons.append("Deterministic path shows brittleness or shallow assertion pressure.")
+    if llm_lift_signal > 0:
+        reasons.append("LLM lift signal is present through mocked or opt-in live diagnostics.")
+    if guardability >= 18:
+        reasons.append("Bounded proposer or validator seam can constrain model output.")
+    if pass_rate < 1:
+        reasons.append("Recent benchmark results are not fully green.")
+    if recommendation == "upgrade_candidate":
+        reasons.append("Read-only, bounded node is suitable for an autonomy pilot.")
+    if not reasons:
+        reasons.append(f"Signals observed: {', '.join(signals) if signals else 'none'}.")
+    return reasons
+
+
+def _result_has_validation_rejection(result: Mapping[str, Any]) -> bool:
+    return _contains_any_key(result, {"invalid_json", "invalid_schema", "validation_error", "outside_window"})
+
+
+def _result_has_real_llm(result: Mapping[str, Any]) -> bool:
+    return _contains_key_value(result, "real_llm_mode", True) or _contains_key_value(result, "llm_invoked", True)
+
+
+def _contains_any_key(value: Any, keys: set[str]) -> bool:
+    if isinstance(value, Mapping):
+        return any(key in value for key in keys) or any(_contains_any_key(item, keys) for item in value.values())
+    if isinstance(value, list):
+        return any(_contains_any_key(item, keys) for item in value)
+    return False
+
+
+def _contains_key_value(value: Any, key: str, expected: Any) -> bool:
+    if isinstance(value, Mapping):
+        if value.get(key) == expected:
+            return True
+        return any(_contains_key_value(item, key, expected) for item in value.values())
+    if isinstance(value, list):
+        return any(_contains_key_value(item, key, expected) for item in value)
+    return False
+
+
+def _load_results_by_node(report_dir: Path) -> dict[str, list[Mapping[str, Any]]]:
+    results_by_node: dict[str, list[Mapping[str, Any]]] = {}
+    for node in VALID_NODES:
+        path = report_dir / f"{node}.latest.json"
+        if not path.exists():
+            continue
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        results = raw.get("results", [])
+        if isinstance(results, list):
+            results_by_node[node] = [item for item in results if isinstance(item, Mapping)]
+    return results_by_node
+
+
+def _write_autonomy_scorecard_markdown(path: Path, payload: Mapping[str, Any]) -> None:
+    nodes = payload.get("nodes") if isinstance(payload.get("nodes"), Mapping) else {}
+    lines = [
+        "# Factory graph node autonomy scorecard",
+        "",
+        f"- Updated: {payload.get('generated_at')}",
+        f"- Live LLM enabled: {payload.get('live_llm_enabled')}",
+        f"- Score version: {payload.get('score_version')}",
+        "",
+        "| Node | Score | Recommendation | Safety Cap | Pass Rate | Reasons |",
+        "| --- | ---: | --- | --- | ---: | --- |",
+    ]
+    for node, item in sorted(nodes.items()):
+        reasons = "; ".join(str(reason) for reason in item.get("reasons", [])[:2])
+        lines.append(
+            "| "
+            f"`{node}` | {item.get('score')} | {item.get('recommendation')} | "
+            f"{item.get('safety_cap')} | {item.get('pass_rate')} | {reasons.replace('|', '/')} |"
+        )
+    _atomic_write_text(path, "\n".join(lines) + "\n")
+
+
 def _record_result(case: Mapping[str, Any], result: Mapping[str, Any]) -> None:
-    REPORT_DIR.mkdir(parents=True, exist_ok=True)
+    report_dir = benchmark_report_dir()
+    report_dir.mkdir(parents=True, exist_ok=True)
     node = str(case["node"])
-    latest_path = REPORT_DIR / f"{node}.latest.json"
+    latest_path = report_dir / f"{node}.latest.json"
     existing: dict[str, Any] = {"node": node, "results": []}
     if latest_path.exists():
         existing = json.loads(latest_path.read_text(encoding="utf-8"))
@@ -1062,10 +1635,16 @@ def _record_result(case: Mapping[str, Any], result: Mapping[str, Any]) -> None:
     }
     _atomic_write_text(latest_path, json.dumps(payload, default=_json_default, indent=2, sort_keys=True) + "\n")
     _write_markdown_report(node, payload)
+    if scorecard_enabled():
+        write_autonomy_scorecard(
+            load_cases(selected_node()),
+            report_dir=report_dir,
+            live_llm_enabled=live_llm_benchmark_enabled(),
+        )
 
 
 def _write_markdown_report(node: str, payload: Mapping[str, Any]) -> None:
-    path = REPORT_DIR / f"{node}.first-run.md"
+    path = benchmark_report_dir() / f"{node}.first-run.md"
     results = list(payload.get("results") or [])
     passed = sum(1 for item in results if item.get("status") == "passed")
     failed = len(results) - passed
@@ -1090,7 +1669,7 @@ def _write_markdown_report(node: str, payload: Mapping[str, Any]) -> None:
 
 
 def _update_baseline_from_report(node: str) -> None:
-    latest_path = REPORT_DIR / f"{node}.latest.json"
+    latest_path = benchmark_report_dir() / f"{node}.latest.json"
     if not latest_path.exists():
         return
     BASELINE_DIR.mkdir(parents=True, exist_ok=True)

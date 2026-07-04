@@ -23,12 +23,6 @@ export const navSections = [
       { path: '/machine-resources', label: 'Machine & Resources', icon: 'precision_manufacturing' },
     ],
   },
-  {
-    label: 'Intelligence',
-    items: [
-      { path: '/predictive-analysis', label: 'Predictive Analysis', icon: 'trending_up' },
-    ],
-  },
 ]
 
 export const utilityNavItems = [

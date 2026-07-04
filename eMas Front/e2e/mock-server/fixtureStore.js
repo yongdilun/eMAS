@@ -851,7 +851,15 @@ function responseDocumentZeroMatchApprovalScenario() {
 }
 
 function responseDocumentRejectedScenario() {
-  const definition = cascadeDefinition('forward')
+  const baseDefinition = cascadeDefinition('forward')
+  const definition = {
+    ...baseDefinition,
+    operationId: 'pw-plan-rd-rejected',
+    second: {
+      ...baseDefinition.second,
+      approvalId: 'pw-rd-rejected-approval-2',
+    },
+  }
   return {
     name: 'responseDocumentRejectedApproval',
     description: 'Response document rejected approval fixture.',
@@ -870,7 +878,6 @@ function responseDocumentRejectedScenario() {
       session.status = 'WAITING_APPROVAL'
       session.pending_approval = {
         ...approvalPayload(session, definition.second),
-        approval_id: 'pw-rd-rejected-approval-2',
         created_at: fixtureTime(5),
         expires_at: fixtureTime(300),
       }

@@ -4,20 +4,19 @@ import Alert from '../components/features/dashboard/Alert'
 import ProductionChart from '../components/features/dashboard/ProductionChart'
 import QuickActions from '../components/features/dashboard/QuickActions'
 import PageHeader from '../components/shared/PageHeader'
-import { dashboardApi, alertsApi, reportsApi, toList, toData } from '../services/api'
+import { dashboardApi, alertsApi, productionAnalyticsApi, toList, toData } from '../services/api'
 import { debugResponse, unwrap } from '../services/normalizers'
 import logger from '../services/logger'
 
-// Fallback demo values shown until API responds
-const DEMO_KPIS = {
-    oee: { value: '85.2%', change: 1.5, isPositive: true },
-    production: { value: '10,450 units', change: 5.0, isPositive: true },
-    downtime: { value: '2.1 hrs', change: 0.2, isPositive: false },
-    utilization: { value: '78%', change: 2.5, isPositive: true },
+const EMPTY_KPIS = {
+    oee: { value: '0.0%', change: 0, isPositive: true },
+    production: { value: '0 units', change: 0, isPositive: true },
+    downtime: { value: '0.0 hrs', change: 0, isPositive: true },
+    utilization: { value: '0.0%', change: 0, isPositive: true },
 }
 
 const Dashboard = () => {
-    const [kpis, setKpis] = useState(DEMO_KPIS)
+    const [kpis, setKpis] = useState(EMPTY_KPIS)
     const [alerts, setAlerts] = useState([])
     const [chartData, setChartData] = useState(null)
     const [loading, setLoading] = useState(true)
@@ -26,7 +25,7 @@ const Dashboard = () => {
         Promise.allSettled([
             dashboardApi.kpis(),
             alertsApi.list({ status: 'active' }),
-            reportsApi.productionOutput(),
+            productionAnalyticsApi.output(),
         ]).then(([kpiRes, alertRes, prodRes]) => {
             // ── KPIs from /dashboard/kpis ──────────────────────────────────────────
             if (kpiRes.status === 'fulfilled' && kpiRes.value) {
@@ -34,7 +33,7 @@ const Dashboard = () => {
                 const d = toData(raw) ?? unwrap(raw) ?? raw
                 logger.info('Dashboard KPIs raw keys:', Object.keys(d || {}))
                 logger.info('Dashboard KPIs loaded', d)
-                const next = { ...DEMO_KPIS }
+                const next = { ...EMPTY_KPIS }
                 // Accept any casing the backend uses
                 const p = (keys) => { for (const k of keys) if (d[k] != null) return d[k]; return null }
 
@@ -53,7 +52,7 @@ const Dashboard = () => {
                 if (utilPct != null) next.utilization = { value: `${Number(utilPct).toFixed(1)}%`, change: Math.abs(utilCh), isPositive: utilCh >= 0 }
                 setKpis(next)
             } else {
-                logger.warn('Dashboard KPIs unavailable; using demo values', { reason: kpiRes.reason?.message })
+                logger.warn('Dashboard KPIs unavailable', { reason: kpiRes.reason?.message })
             }
 
             // ── Alerts from /alerts ────────────────────────────────────────────────
@@ -74,9 +73,9 @@ const Dashboard = () => {
                 logger.warn('Alerts unavailable', { reason: alertRes.reason?.message })
             }
 
-            // ── Production chart data from /reports/production-output ──────────────
+            // ── Production chart data from /production-analytics/output ────────────
             if (prodRes.status === 'fulfilled' && prodRes.value) {
-                setChartData(toData(prodRes.value) ?? prodRes.value)
+                setChartData(toList(prodRes.value))
             } else {
                 logger.warn('Production output chart unavailable', { reason: prodRes.reason?.message })
             }
@@ -141,11 +140,7 @@ const Dashboard = () => {
                                     <Alert key={i} type={a.type} title={a.title} time={a.time} />
                                 ))
                             ) : (
-                                <>
-                                    <Alert type="error" title="Machine #3 Overheating" time="2 min ago" />
-                                    <Alert type="warning" title="Low Supply Levels" time="15 min ago" />
-                                    <Alert type="info" title="Production Anomaly Detected" time="45 min ago" />
-                                </>
+                                <p className="text-ink-muted text-sm">No active alerts</p>
                             )}
                         </div>
                     </div>

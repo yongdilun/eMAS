@@ -31,6 +31,7 @@ from factory_agent.schemas import (
     ApprovalRequiredBlock,
     ApprovalResponse,
     DiagnosticBlock,
+    FileDownloadBlock,
     KnowledgeAnswerBlock,
     MutationResultBlock,
     PendingInteractionResponse,
@@ -1598,6 +1599,14 @@ def _activity_project_approval_display_steps(
 ) -> list[dict[str, Any]]:
     """Collapse graph-node approval noise into one user-facing approval timeline."""
 
+    replan_spine = _replan_spine_from_session_context(snapshot.session)
+    if (
+        replan_spine
+        and any(_activity_int(row.get("_replan_attempt") or row.get("replan_attempt")) is not None for row in rows)
+        and session_status not in _ACTIVITY_ACTIVE_SESSION_STATUSES
+    ):
+        return rows
+
     if not rows or not _activity_has_approval_flow(snapshot, rows):
         return rows
 
@@ -2290,6 +2299,8 @@ def _operation_rows_from_result(
 ) -> list[dict[str, Any]]:
     if not isinstance(result, dict):
         result = {}
+    if _file_download_from_result(result):
+        return []
 
     rows: list[dict[str, Any]] = []
     raw_outcomes = result.get("outcomes")
@@ -2739,6 +2750,10 @@ def _planner_owned_response_contract_diagnostics(session: Any, *, reason: str) -
     response_refs = response_context.get("evidence_refs") or response_diagnostics.get("response_evidence_refs")
     if isinstance(response_refs, list):
         diagnostics["response_evidence_refs"] = list(response_refs)
+    file_download = _file_download_from_response_context(response_context)
+    if file_download:
+        diagnostics["reason"] = "file_download"
+        diagnostics["file_download"] = file_download
     return diagnostics
 
 
@@ -3078,6 +3093,24 @@ def _derive_snapshot_presentation(
             invariants={**invariants, "full_success_forbidden": True},
         )
 
+    file_download_diagnostics = _planner_owned_response_contract_diagnostics(session, reason="completed_answer")
+    file_download = file_download_diagnostics.get("file_download")
+    if session_status == "COMPLETED" and isinstance(file_download, dict):
+        return PresentationResponse(
+            kind="answer",
+            state="completed",
+            operation_id=operation_id,
+            summary=file_download.get("summary") or _planner_owned_completed_answer_summary(
+                session=session,
+                terminal_event=terminal_event,
+                plan=plan,
+            ),
+            rows=[],
+            sources=sources,
+            diagnostics=file_download_diagnostics,
+            invariants={**invariants, "full_success_forbidden": False},
+        )
+
     if terminal_event is not None and terminal_event.event_type == "session_completed" and not _trimmed(terminal_event.content):
         return PresentationResponse(
             kind="diagnostic",
@@ -3159,6 +3192,55 @@ def _derive_snapshot_presentation(
     )
 
 
+def _file_download_from_result(result: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not isinstance(result, dict):
+        return None
+    nested = result.get("file_download")
+    body = result.get("body")
+    payload = nested if isinstance(nested, dict) else body if isinstance(body, dict) else result
+    content_type = str(payload.get("content_type") or "").split(";")[0].strip().lower()
+    if payload.get("kind") != "file_download" and content_type != "application/pdf":
+        return None
+    filename = _trimmed(payload.get("filename")) or "report.pdf"
+    download_url = _trimmed(payload.get("download_url")) or _trimmed(payload.get("request_url")) or _trimmed(result.get("request_url"))
+    if not download_url:
+        return None
+    view_url = _trimmed(payload.get("view_url")) or download_url
+    summary = _trimmed(payload.get("summary")) or f"{filename} is ready to view or download."
+    title = _trimmed(payload.get("title")) or "PDF report ready"
+    return {
+        "title": title,
+        "filename": filename,
+        "content_type": content_type or "application/pdf",
+        "download_url": download_url,
+        "view_url": view_url,
+        "summary": summary,
+    }
+
+
+def _file_download_from_response_context(response_context: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not isinstance(response_context, dict):
+        return None
+    candidates: list[dict[str, Any]] = [response_context]
+    diagnostics = response_context.get("diagnostics")
+    if isinstance(diagnostics, dict):
+        candidates.append(diagnostics)
+        blocks = diagnostics.get("blocks")
+        if isinstance(blocks, list):
+            for block in blocks:
+                if not isinstance(block, dict):
+                    continue
+                candidates.append(block)
+                fields = block.get("fields")
+                if isinstance(fields, dict):
+                    candidates.append(fields)
+    for candidate in candidates:
+        file_download = _file_download_from_result(candidate)
+        if file_download:
+            return file_download
+    return None
+
+
 def _presentation_for_event(ev: TimelineEventResponse) -> PresentationResponse | None:
     operation_id = ev.operation_id or _trimmed((ev.step_context or {}).get("plan_id")) or None
     details = ev.details if isinstance(ev.details, dict) else {}
@@ -3219,8 +3301,25 @@ def _presentation_for_event(ev: TimelineEventResponse) -> PresentationResponse |
     if ev.event_type == "tool_result":
         status = str(ev.status or "").upper()
         default_status = "failed" if status in {"FAILED", "AMBIGUOUS"} else "succeeded"
+        result_payload = details.get("result") if isinstance(details.get("result"), dict) else None
+        file_download = _file_download_from_result(result_payload)
+        if file_download and status not in {"FAILED", "AMBIGUOUS"}:
+            return PresentationResponse(
+                kind="answer",
+                state="completed",
+                operation_id=operation_id,
+                approval_id=ev.approval_id,
+                summary=file_download.get("summary") or ev.content,
+                rows=[],
+                diagnostics={
+                    "reason": "file_download",
+                    "event_status": ev.status,
+                    "file_download": file_download,
+                },
+                invariants={"full_success_forbidden": False},
+            )
         rows = _operation_rows_from_result(
-            details.get("result") if isinstance(details.get("result"), dict) else None,
+            result_payload,
             default_status=default_status,
             operation_id=operation_id,
             approval_id=ev.approval_id,
@@ -3503,6 +3602,7 @@ def _response_blocks_from_presentation(
     rows = presentation.rows if isinstance(presentation.rows, list) else []
     sources = presentation.sources if isinstance(presentation.sources, list) else []
     diagnostics = presentation.diagnostics if isinstance(presentation.diagnostics, dict) else {}
+    file_download = diagnostics.get("file_download") if isinstance(diagnostics.get("file_download"), dict) else None
     reason = str(diagnostics.get("reason") or presentation.kind)
 
     blocks: list[ResponseBlock] = []
@@ -3519,6 +3619,20 @@ def _response_blocks_from_presentation(
                 id=f"message:{anchor}:{state}",
                 message=summary,
                 status=state,  # type: ignore[arg-type]
+            )
+        )
+
+    if file_download:
+        blocks.append(
+            FileDownloadBlock(
+                id=f"file:{anchor}",
+                title=_trimmed(file_download.get("title")) or "PDF report ready",
+                filename=_trimmed(file_download.get("filename")) or "report.pdf",
+                content_type=_trimmed(file_download.get("content_type")) or "application/pdf",
+                download_url=_trimmed(file_download.get("download_url")) or "",
+                view_url=_trimmed(file_download.get("view_url")) or _trimmed(file_download.get("download_url")),
+                summary=_trimmed(file_download.get("summary")) or summary or None,
+                operation_id=operation_id,
             )
         )
 

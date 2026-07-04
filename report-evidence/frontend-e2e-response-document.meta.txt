@@ -1,0 +1,4 @@
+command=npm run test:e2e:response-document
+started=2026-06-20T15:25:07.2897154+08:00
+ended=2026-06-20T15:25:57.3320559+08:00
+exit_code=0

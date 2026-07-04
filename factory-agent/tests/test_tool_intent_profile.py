@@ -63,6 +63,19 @@ def test_vocabulary_derives_generic_and_entity_tokens_from_registry_shape():
     assert {"utilization", "report"} <= intent_feature_tokens("show machine utilization report", vocabulary=vocabulary)
 
 
+def test_vocabulary_promotes_read_only_report_family_root_to_entity_token():
+    tools = [
+        _tool("get__reports_machine-utilization", "Get machine utilization report", "/reports/machine-utilization"),
+        _tool("get__reports_production-output", "Get production output report", "/reports/production-output"),
+        _tool("get__reports_downtime", "Get downtime report", "/reports/downtime"),
+        _tool("get__machines", "Get machines", "/machines"),
+    ]
+
+    vocabulary = build_tool_intent_vocabulary(tools, generic_threshold=0.60, operator_tokens={"generate"})
+
+    assert "report" in vocabulary.entity_tokens
+
+
 def test_entity_tokens_still_support_specialized_endpoint_phrases():
     tools = [
         _tool("get__machines", "List machines", "/machines"),

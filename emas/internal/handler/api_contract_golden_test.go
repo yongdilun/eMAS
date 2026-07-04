@@ -163,6 +163,24 @@ func seedGoldenInventoryContract(t *testing.T, db *gorm.DB) {
 		AvailableFrom:    base.Add(24 * time.Hour),
 		LastUpdated:      base,
 	})
+	mustCreate(t, db, &domain.Job{
+		JobID:         "JOB-GOLDEN",
+		ProductID:     "P-GOLDEN",
+		QuantityTotal: 100,
+		Priority:      domain.JobPriorityMedium,
+		Deadline:      base.Add(48 * time.Hour),
+		Status:        domain.JobStatusScheduled,
+		CreatedAt:     base.Add(-24 * time.Hour),
+		UpdatedAt:     base.Add(-12 * time.Hour),
+	})
+	mustCreate(t, db, &domain.JobSteps{
+		JobStepID:      "JS-GOLDEN",
+		JobID:          "JOB-GOLDEN",
+		StepID:         "STEP-GOLDEN",
+		StepSequence:   1,
+		QuantityTarget: 100,
+		Status:         domain.JobStepStatusScheduled,
+	})
 	mustCreate(t, db, &domain.InventoryReservation{
 		ReservationID: "RES-GOLDEN",
 		MaterialID:    "MAT-GOLDEN",

@@ -121,6 +121,11 @@
     "node": "semantic_intake_node",
     "behavior": "LLM repair/fallback",
     "prompt": "Show status for M-CNC-01; then make sure every requested clause is represented even if the model returns one item.",
+    "autonomy_probe": {
+      "signals": ["multi_step", "llm_repair", "schema_validation"],
+      "safety_cap": "read_only",
+      "expected_recommendation": "upgrade_candidate"
+    },
     "expected_evidence": [
       "planner_diagnostics.semantic_intake",
       "requirement_ledger.requirements",

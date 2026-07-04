@@ -79,6 +79,49 @@ PLANNER_NO_ACTION_MESSAGE = (
 EMPTY_PLAN_COMPLETION_BACKENDS = {"system", "v2_rag_tool", "planner_owned_agent_graph"}
 
 
+def _context_replan_limit_marker(context: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not isinstance(context, dict):
+        return None
+    candidates: list[Any] = [
+        context.get("replan_spine"),
+        context.get("response_document_context"),
+    ]
+    intent_contract = context.get("intent_contract")
+    if isinstance(intent_contract, dict):
+        candidates.extend(
+            [
+                intent_contract.get("replan_spine"),
+                intent_contract.get("response_document_context"),
+            ]
+        )
+    planner_graph = context.get("planner_owned_agent_graph")
+    if isinstance(planner_graph, dict):
+        candidates.extend(
+            [
+                planner_graph.get("replan_spine"),
+                planner_graph.get("response_document_context"),
+            ]
+        )
+    for candidate in candidates:
+        if not isinstance(candidate, dict):
+            continue
+        diagnostics = candidate.get("diagnostics") if isinstance(candidate.get("diagnostics"), dict) else candidate
+        if diagnostics.get("replan_limit_reached") is True:
+            return diagnostics
+        replan_spine = diagnostics.get("replan_spine")
+        if isinstance(replan_spine, dict) and replan_spine.get("replan_limit_reached") is True:
+            return diagnostics
+    return None
+
+
+def _context_replan_limit_summary(context: dict[str, Any] | None) -> str | None:
+    marker = _context_replan_limit_marker(context)
+    if not isinstance(marker, dict):
+        return None
+    summary = str(marker.get("summary") or "").strip()
+    return summary or None
+
+
 class PlanCreationService:
     def __init__(
         self,
@@ -872,6 +915,8 @@ class PlanCreationService:
         skip_completed_narrative = False
         if context_for_session is not None:
             skip_completed_narrative = bool(context_for_session.pop("skip_completed_narrative_adapter", False))
+        blocked_by_replan_limit = kind == "execution" and _context_replan_limit_marker(context_for_session) is not None
+        replan_limit_summary = _context_replan_limit_summary(context_for_session)
         if planner_no_action:
             blocked_context = dict(context_for_session or {})
             blocked_context["blocked_reason"] = PLANNER_NO_ACTION_REASON
@@ -889,6 +934,15 @@ class PlanCreationService:
         _bump_session_revision(sess)
         if planner_no_action:
             sess.status = "BLOCKED"
+            sess.completed_at = None
+        elif blocked_by_replan_limit:
+            sess.status = "BLOCKED"
+            sess.error = (
+                replan_limit_summary
+                or first_failed_summary
+                or str(getattr(draft, "plan_explanation", "") or "").strip()
+                or "I could not verify the requested evidence after bounded retries."
+            )
             sess.completed_at = None
         elif persisted_status == "COMPLETED":
             if first_failed_summary:

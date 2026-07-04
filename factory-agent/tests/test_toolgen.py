@@ -323,6 +323,32 @@ def test_tools_from_openapi_preserves_response_schema_and_roles():
     assert tools["post__jobs"].input_schema["x-allowed-roles"] == ["manager", "admin"]
 
 
+def test_tools_from_openapi_records_pdf_response_content_type():
+    spec = {
+        "swagger": "2.0",
+        "produces": ["application/json"],
+        "paths": {
+            "/reports/production-output": {
+                "get": {
+                    "operationId": "get__reports_production-output",
+                    "summary": "Production output PDF",
+                    "produces": ["application/pdf"],
+                    "responses": {
+                        "200": {"description": "PDF file", "schema": {"type": "file"}},
+                        "400": {"description": "JSON error"},
+                    },
+                }
+            }
+        },
+    }
+
+    tool = tools_from_openapi(spec)[0]
+
+    assert tool.is_read_only is True
+    assert tool.requires_approval is False
+    assert "application/pdf" in tool.output_schema["x-response-content-types"]
+
+
 def test_tools_from_openapi_preserves_ai_contract_metadata_and_status_token():
     spec = {
         "swagger": "2.0",

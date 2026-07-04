@@ -122,6 +122,19 @@ def _machine_status_tool(*, tags: list[str] | None = None) -> ToolInfo:
     )
 
 
+def _report_pdf_tool(name: str, endpoint: str, tags: list[str]) -> ToolInfo:
+    tool = _tool(
+        name,
+        endpoint=endpoint,
+        tags=tags,
+        query_params=["start", "end"],
+        input_properties={"start": {"type": "string"}, "end": {"type": "string"}},
+        description=name.replace("_", " "),
+    )
+    tool.output_schema = {"type": "object", "x-response-content-types": ["application/pdf"]}
+    return tool
+
+
 def _job_list_tool() -> ToolInfo:
     return _tool(
         "get__jobs",
@@ -672,6 +685,46 @@ async def test_phase4_each_capability_need_gets_its_own_candidate_window():
     assert len(machine.candidate_window.candidates) + len(jobs.candidate_window.candidates) == 10
     assert all(candidate.tool_name.startswith("machine_") for candidate in machine.candidate_window.candidates)
     assert all(candidate.tool_name.startswith("job_") for candidate in jobs.candidate_window.candidates)
+
+
+@pytest.mark.asyncio
+async def test_phase4_pdf_report_need_selects_matching_report_endpoint():
+    retriever = V2CapabilityToolRetriever(_selector(tool_selector_top_k=5))
+    tools = {
+        "get__machines": _tool(
+            "get__machines",
+            endpoint="/machines",
+            tags=["machine", "list", "status"],
+            entity="machine",
+            response_contract="result_collection_v1",
+        ),
+        "get__reports_bottlenecks": _report_pdf_tool(
+            "get__reports_bottlenecks",
+            "/reports/bottlenecks",
+            ["report", "bottleneck", "list", "pdf", "generate"],
+        ),
+        "get__reports_machine-utilization": _report_pdf_tool(
+            "get__reports_machine-utilization",
+            "/reports/machine-utilization",
+            ["report", "machine", "utilization", "list", "pdf", "generate"],
+        ),
+    }
+
+    result = await retriever.retrieve_tools_for_need(
+        CapabilityNeed(
+            requirement_id="req-report",
+            source_of_truth="operational_state",
+            entity="report",
+            action="list",
+            constraints={"report_type": "machine utilization", "report_format": "pdf"},
+        ),
+        tools_by_name=tools,
+    )
+
+    assert result.status == "ok"
+    assert result.candidate_window.candidates[0].tool_name == "get__reports_machine-utilization"
+    assert result.hydrated_tool_cards.cards[0].output_contract == "file_download_v1"
+    assert all(not candidate.tool_name.startswith("get__machines") for candidate in result.candidate_window.candidates)
 
 
 @pytest.mark.asyncio

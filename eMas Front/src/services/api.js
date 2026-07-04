@@ -114,6 +114,61 @@ const put = (path, body, headers, opts) => request('PUT', path, body, headers, o
 const patch = (path, body, headers, opts) => request('PATCH', path, body, headers, opts)
 const del = (path) => request('DELETE', path)
 
+const withQuery = (path, params = {}) => {
+  const q = new URLSearchParams(params).toString()
+  return q ? `${path}?${q}` : path
+}
+
+function filenameFromContentDisposition(header, fallback) {
+  if (!header) return fallback
+  const utf8 = header.match(/filename\*=UTF-8''([^;]+)/i)
+  if (utf8?.[1]) return decodeURIComponent(utf8[1].replace(/"/g, ''))
+  const plain = header.match(/filename="?([^";]+)"?/i)
+  return plain?.[1] || fallback
+}
+
+async function requestBlob(path) {
+  const startMs = Date.now()
+  logger.debug(`GET ${path}`)
+  let res
+  try {
+    res = await fetch(`${BASE_URL}${path}`, { method: 'GET' })
+  } catch (networkErr) {
+    const msg = `Network error reaching ${BASE_URL}${path}`
+    logger.error(msg, networkErr, { method: 'GET', path })
+    const err = new Error(`Cannot connect to eMAS server. Is the backend running? (${networkErr.message})`)
+    err.type = 'NETWORK'
+    err.original = networkErr
+    throw err
+  }
+
+  logger.apiRequest('GET', path, Date.now() - startMs, res.status)
+  if (!res.ok) {
+    const detail = await parseErrorBody(res)
+    logger.apiError('GET', path, new Error(detail))
+    const err = new Error(detail || `Request failed with status ${res.status}`)
+    err.status = res.status
+    err.type = res.status >= 500 ? 'SERVER' : res.status === 404 ? 'NOT_FOUND' : res.status === 401 ? 'AUTH' : 'CLIENT'
+    err.path = path
+    throw err
+  }
+
+  const blob = await res.blob()
+  const contentType = res.headers.get('Content-Type') || blob.type || 'application/octet-stream'
+  const fallback = 'report.pdf'
+  const filename = filenameFromContentDisposition(res.headers.get('Content-Disposition'), fallback)
+  const url = URL.createObjectURL(blob)
+  return {
+    blob,
+    url,
+    objectUrl: url,
+    filename,
+    contentType,
+    requestUrl: `${BASE_URL}${path}`,
+    httpStatus: res.status,
+  }
+}
+
 /** POST with planner identity headers for scheduling write operations */
 const postPlanner = (path, body, options = {}) =>
   request('POST', path, body, PLANNER_HEADERS, options)
@@ -454,14 +509,23 @@ export const maintenanceApi = {
 
 // ─── Reports & Analytics ─────────────────────────────────────────────────────
 export const reportsApi = {
-  productionOutput: (params = {}) => get(`/reports/production-output?${new URLSearchParams(params)}`),
-  machineUtilization: (params = {}) => get(`/reports/machine-utilization?${new URLSearchParams(params)}`),
-  jobCompletion: (params = {}) => get(`/reports/job-completion?${new URLSearchParams(params)}`),
-  inventoryTrends: (params = {}) => get(`/reports/inventory-trends?${new URLSearchParams(params)}`),
-  qualityTrends: (params = {}) => get(`/reports/quality-trends?${new URLSearchParams(params)}`),
-  oee: (params = {}) => get(`/reports/oee?${new URLSearchParams(params)}`),
-  bottlenecks: (params = {}) => get(`/reports/bottlenecks?${new URLSearchParams(params)}`),
-  maintenanceEfficiency: (params = {}) => get(`/reports/maintenance-efficiency?${new URLSearchParams(params)}`),
+  productionOutput: (params = {}) => requestBlob(withQuery('/reports/production-output', params)),
+  machineUtilization: (params = {}) => requestBlob(withQuery('/reports/machine-utilization', params)),
+  jobCompletion: (params = {}) => requestBlob(withQuery('/reports/job-completion', params)),
+  inventoryTrends: (params = {}) => requestBlob(withQuery('/reports/inventory-trends', params)),
+  qualityTrends: (params = {}) => requestBlob(withQuery('/reports/quality-trends', params)),
+  oee: (params = {}) => requestBlob(withQuery('/reports/oee', params)),
+  bottlenecks: (params = {}) => requestBlob(withQuery('/reports/bottlenecks', params)),
+  downtime: (params = {}) => requestBlob(withQuery('/reports/downtime', params)),
+  maintenanceEfficiency: (params = {}) => requestBlob(withQuery('/reports/maintenance-efficiency', params)),
+}
+
+export const productionAnalyticsApi = {
+  summary: (params = {}) => get(withQuery('/production-analytics/summary', params)),
+  output: (params = {}) => get(withQuery('/production-analytics/output', params)),
+  machineUtilization: (params = {}) => get(withQuery('/production-analytics/machine-utilization', params)),
+  jobCompletion: (params = {}) => get(withQuery('/production-analytics/job-completion', params)),
+  downtime: (params = {}) => get(withQuery('/production-analytics/downtime', params)),
 }
 
 // ─── Dashboard ───────────────────────────────────────────────────────────────
