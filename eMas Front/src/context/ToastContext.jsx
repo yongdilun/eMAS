@@ -176,7 +176,7 @@ function Toast({ toast, onDismiss }) {
             <span className={`absolute left-0 top-3 bottom-3 w-1 rounded-full ${cfg.bar}`} />
 
             {/* Icon */}
-            <span className={`material-icons text-[20px] mt-0.5 flex-shrink-0 ${cfg.iconColor}`}>
+            <span className={`material-symbols-outlined text-[20px] mt-0.5 flex-shrink-0 ${cfg.iconColor}`} aria-hidden="true">
                 {cfg.icon}
             </span>
 
@@ -186,10 +186,10 @@ function Toast({ toast, onDismiss }) {
             {/* Dismiss */}
             <button
                 onClick={() => onDismiss(toast.id)}
-                className="flex-shrink-0 text-ink-subtle hover:text-gray-200 transition-colors mt-0.5"
+                className="flex h-5 w-5 flex-shrink-0 items-center justify-center text-gray-400 hover:text-gray-200 transition-colors mt-0.5"
                 aria-label="Dismiss"
             >
-                <span className="material-icons text-[16px]">close</span>
+                <span className="material-symbols-outlined text-[16px]" aria-hidden="true">close</span>
             </button>
         </div>
     )

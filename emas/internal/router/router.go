@@ -23,7 +23,7 @@ func Setup(db *gorm.DB) *gin.Engine {
 		AllowOrigins:     []string{"*"},
 		AllowMethods:     []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
 		AllowHeaders:     []string{"Origin", "Content-Length", "Content-Type", "Authorization", "X-User-Id", "X-User-Role", "X-Request-Id", "X-Correlation-Id"},
-		ExposeHeaders:    []string{"X-Request-Id", "X-Correlation-Id"},
+		ExposeHeaders:    []string{"X-Request-Id", "X-Correlation-Id", "Content-Disposition"},
 		AllowCredentials: false,
 		MaxAge:           12 * 60 * 60,
 	}))

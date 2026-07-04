@@ -217,3 +217,101 @@ func TestReportsHandler_ProductionAnalyticsReflectsRealRows(t *testing.T) {
 	pdf := testutil.Request(r, "GET", "/api/v1/reports/downtime"+query, nil)
 	assertPDFResponse(t, pdf)
 }
+
+func TestReportsHandler_CanonicalSeedProvidesDefaultReportDataWithoutActiveReportJobs(t *testing.T) {
+	db := testutil.NewTestDB(t)
+	testutil.SeedCanonical(t, db)
+	r := testutil.NewTestRouter(db, router.Setup)
+
+	output := testutil.Request(r, "GET", "/api/v1/production-analytics/output", nil)
+	if output.Code != http.StatusOK {
+		t.Fatalf("default output status %d body %s", output.Code, output.Body.String())
+	}
+	var outputResp struct {
+		Success bool `json:"success"`
+		Data    []struct {
+			JobID            string `json:"job_id"`
+			QuantityProduced int    `json:"quantity_produced"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(output.Body.Bytes(), &outputResp); err != nil {
+		t.Fatalf("decode output: %v", err)
+	}
+	if !outputResp.Success || len(outputResp.Data) == 0 {
+		t.Fatalf("default analytics output should include report seed rows: %+v", outputResp)
+	}
+
+	pdf := testutil.Request(r, "GET", "/api/v1/reports/production-output", nil)
+	assertPDFResponse(t, pdf)
+
+	var activeReportSlots int64
+	if err := db.Table("job_step_schedule_slots AS s").
+		Joins("JOIN job_steps js ON js.job_step_id = s.job_step_id").
+		Where("js.job_id LIKE ?", "JOB-RPT-%").
+		Where("s.status IN ?", []string{domain.SlotStatusPlanned, domain.SlotStatusRunning, domain.SlotStatusPaused}).
+		Count(&activeReportSlots).Error; err != nil {
+		t.Fatalf("count active report slots: %v", err)
+	}
+	if activeReportSlots != 0 {
+		t.Fatalf("active JOB-RPT slots = %d, want 0", activeReportSlots)
+	}
+
+	rangeStart := time.Now().UTC().Truncate(24*time.Hour).AddDate(0, 0, -8)
+	rangeEnd := time.Now().UTC().Add(24 * time.Hour)
+	query := "?start=" + rangeStart.Format(time.RFC3339) + "&end=" + rangeEnd.Format(time.RFC3339)
+
+	summary := testutil.Request(r, "GET", "/api/v1/production-analytics/summary"+query, nil)
+	if summary.Code != http.StatusOK {
+		t.Fatalf("summary status %d body %s", summary.Code, summary.Body.String())
+	}
+	var summaryResp struct {
+		Success bool `json:"success"`
+		Data    struct {
+			TotalJobs      int `json:"total_jobs"`
+			CompletedJobs  int `json:"completed_jobs"`
+			InProgressJobs int `json:"in_progress_jobs"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(summary.Body.Bytes(), &summaryResp); err != nil {
+		t.Fatalf("decode summary: %v", err)
+	}
+	if !summaryResp.Success || summaryResp.Data.TotalJobs != 2 || summaryResp.Data.CompletedJobs != 2 || summaryResp.Data.InProgressJobs != 0 {
+		t.Fatalf("recent report jobs summary = %+v, want 2 completed and 0 in-progress", summaryResp)
+	}
+
+	completion := testutil.Request(r, "GET", "/api/v1/production-analytics/job-completion"+query, nil)
+	if completion.Code != http.StatusOK {
+		t.Fatalf("completion status %d body %s", completion.Code, completion.Body.String())
+	}
+	var completionResp struct {
+		Success bool `json:"success"`
+		Data    []struct {
+			JobID             string  `json:"job_id"`
+			Status            string  `json:"status"`
+			QuantityTotal     int     `json:"quantity_total"`
+			QuantityCompleted int     `json:"quantity_completed"`
+			CompletionPct     float64 `json:"completion_pct"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(completion.Body.Bytes(), &completionResp); err != nil {
+		t.Fatalf("decode completion: %v", err)
+	}
+	if !completionResp.Success || len(completionResp.Data) != 2 {
+		t.Fatalf("recent report job completion rows = %+v, want 2 job-level rows", completionResp)
+	}
+	for _, row := range completionResp.Data {
+		if row.Status != domain.JobStatusCompleted || row.QuantityCompleted != row.QuantityTotal || row.CompletionPct != 100 {
+			t.Fatalf("completion row = %+v, want completed job-level progress", row)
+		}
+	}
+
+	var plannedSeedJobs int64
+	if err := db.Model(&domain.Job{}).
+		Where("job_id LIKE ? AND status = ?", "JOB-SEED-%", domain.JobStatusPlanned).
+		Count(&plannedSeedJobs).Error; err != nil {
+		t.Fatalf("count planned seed jobs: %v", err)
+	}
+	if plannedSeedJobs != 26 {
+		t.Fatalf("planned JOB-SEED jobs = %d, want 26", plannedSeedJobs)
+	}
+}

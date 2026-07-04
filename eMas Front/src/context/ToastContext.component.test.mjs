@@ -127,3 +127,19 @@ test('ToastProvider allows different messages or different dedupe keys', async (
 
   await view.unmount()
 })
+
+test('ToastProvider renders Material Symbols icons, not plain ligature text', async () => {
+  const view = await renderToastRun((toast) => {
+    toast.success('PDF report generated.', { duration: 0 })
+  })
+
+  await waitFor(() => {
+    const icons = Array.from(view.container.querySelectorAll('.material-symbols-outlined'))
+    assert.ok(icons.length >= 2)
+    assert.equal(view.container.querySelector('.material-icons'), null)
+    assert.equal(icons[0].textContent.trim(), 'check_circle')
+    assert.equal(icons[1].textContent.trim(), 'close')
+  })
+
+  await view.unmount()
+})

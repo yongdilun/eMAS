@@ -6,24 +6,55 @@ const unwrapArr = (d) => {
   return []
 }
 
-const labelFor = (row) => {
-  const raw = row.date || row.start_time || row.slot_id || row.machine_id || ''
-  if (!raw) return 'Data'
-  const date = new Date(raw)
-  if (!Number.isNaN(date.getTime())) {
-    return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+const datePartsFor = (row) => {
+  const raw = row.date || row.start_time || ''
+  const rawText = String(raw)
+  const datePrefix = rawText.match(/^(\d{4})-(\d{2})-(\d{2})/)
+  if (datePrefix) {
+    const [, year, month, day] = datePrefix
+    const date = new Date(Number(year), Number(month) - 1, Number(day))
+    return {
+      key: `${year}-${month}-${day}`,
+      label: date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }),
+    }
   }
-  return String(raw)
+
+  if (raw) {
+    const date = new Date(raw)
+    if (!Number.isNaN(date.getTime())) {
+      const key = [
+        date.getFullYear(),
+        String(date.getMonth() + 1).padStart(2, '0'),
+        String(date.getDate()).padStart(2, '0'),
+      ].join('-')
+      return {
+        key,
+        label: date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }),
+      }
+    }
+  }
+
+  const fallback = row.slot_id || row.machine_id || 'Data'
+  return { key: String(fallback), label: String(fallback) }
+}
+
+export const aggregateProductionOutputRows = (data) => {
+  const byDate = new Map()
+  unwrapArr(data).forEach((row) => {
+    const date = datePartsFor(row)
+    const value = Number(row.quantity_produced ?? row.produced ?? row.total_output ?? row.units ?? 0)
+    if (!Number.isFinite(value) || value <= 0) return
+    const existing = byDate.get(date.key) || { label: date.label, value: 0 }
+    existing.value += value
+    byDate.set(date.key, existing)
+  })
+  return Array.from(byDate.entries())
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([, row]) => row)
 }
 
 const ProductionOutputChart = ({ data }) => {
-  const rows = unwrapArr(data)
-    .map(row => ({
-      label: labelFor(row),
-      value: Number(row.quantity_produced ?? row.produced ?? row.total_output ?? row.units ?? 0),
-    }))
-    .filter(row => row.value > 0)
-    .slice(-8)
+  const rows = aggregateProductionOutputRows(data).slice(-8)
 
   if (rows.length === 0) {
     return (
@@ -34,46 +65,29 @@ const ProductionOutputChart = ({ data }) => {
   }
 
   const max = Math.max(...rows.map(row => row.value), 1)
-  const width = 360
-  const height = 150
-  const padX = 18
-  const padY = 14
-  const gap = 10
-  const barWidth = Math.max(12, (width - padX * 2 - gap * (rows.length - 1)) / rows.length)
-
   return (
-    <div className="flex min-h-[150px] flex-1 flex-col gap-3 py-2">
-      <svg
-        fill="none"
-        height="120"
-        preserveAspectRatio="none"
-        viewBox={`0 0 ${width} ${height}`}
-        width="100%"
-        xmlns="http://www.w3.org/2000/svg"
-        role="img"
-        aria-label="Production output chart"
-      >
-        <line x1={padX} x2={width - padX} y1={height - padY} y2={height - padY} stroke="currentColor" className="text-hairline" />
-        {rows.map((row, idx) => {
-          const x = padX + idx * (barWidth + gap)
-          const barHeight = Math.max(4, ((height - padY * 2) * row.value) / max)
-          const y = height - padY - barHeight
+    <div className="flex min-h-[150px] flex-1 flex-col justify-end py-2" role="img" aria-label="Production output chart">
+      <div className="grid h-36 items-end gap-3" style={{ gridTemplateColumns: `repeat(${rows.length}, minmax(0, 1fr))` }}>
+        {rows.map((row) => {
+          const barHeight = Math.max(10, Math.round((96 * row.value) / max))
           return (
-            <g key={`${row.label}-${idx}`}>
-              <rect x={x} y={y} width={barWidth} height={barHeight} rx="3" fill="#5e6ad2" />
-              <text x={x + barWidth / 2} y={Math.max(12, y - 5)} textAnchor="middle" className="fill-ink-muted text-[10px]">
-                {row.value}
-              </text>
-            </g>
+            <div key={row.label} className="flex h-full min-w-0 flex-col justify-end gap-1.5">
+              <span className="text-center text-[11px] font-semibold leading-none text-ink">
+                {row.value.toLocaleString()}
+              </span>
+              <div className="flex h-24 items-end">
+                <div
+                  className="w-full rounded-t bg-primary transition-all duration-700"
+                  style={{ height: `${barHeight}px` }}
+                  title={`${row.label}: ${row.value.toLocaleString()} units`}
+                />
+              </div>
+              <p className="truncate text-center text-ink-muted text-caption">
+                {row.label}
+              </p>
+            </div>
           )
         })}
-      </svg>
-      <div className="grid gap-1" style={{ gridTemplateColumns: `repeat(${rows.length}, minmax(0, 1fr))` }}>
-        {rows.map((row, idx) => (
-          <p key={`${row.label}-label-${idx}`} className="truncate text-center text-ink-muted text-caption">
-            {row.label}
-          </p>
-        ))}
       </div>
     </div>
   )

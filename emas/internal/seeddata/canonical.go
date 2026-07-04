@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"emas/pkg/id"
+	"emas/pkg/productionexec"
 	"gorm.io/gorm"
 )
 
@@ -86,11 +87,11 @@ func SeedCanonical(db *gorm.DB, opts SeedOptions) error {
 	log.Println("Seeding AI proposals...")
 	seedAIProposals(db, jobSlots)
 
-	log.Println("Seeding production logs...")
-	seedProductionLogs(db, jobSlots)
+	log.Println("Seeding completed report production history...")
+	reportSlots := seedReportProductionHistory(db)
 
 	log.Println("Seeding quality inspections...")
-	seedQuality(db, jobSlots)
+	seedQuality(db, reportSlots)
 
 	log.Println("Seeding maintenance and downtime...")
 	seedMaintenance(db)
@@ -944,33 +945,329 @@ func seedAIProposals(db *gorm.DB, jobSlots map[string][]string) {
 	_ = proposalRepo.Create(record)
 }
 
-func seedProductionLogs(db *gorm.DB, jobSlots map[string][]string) {
-	plRepo := repository.NewProductionLogRepository(db)
-	var count int
-	for _, slots := range jobSlots {
-		if count >= 5 {
-			break
-		}
-		if len(slots) == 0 {
-			continue
-		}
-		start := parseTime("2026-01-06T08:00:00Z")
-		end := start.Add(2 * time.Hour)
-		pl := domain.ProductionLogs{
-			ProductionID:     id.NewPrefixed("PL-"),
-			SlotID:           slots[0],
-			StartTime:        start,
-			EndTime:          end,
-			QuantityProduced: 100,
-			QuantityScrap:    2,
-			OperatorNotes:    "Seed data",
-		}
-		if err := plRepo.Create(&pl); err != nil {
-			log.Printf("  prod log: %v", err)
-		} else {
-			count++
+func SeedReportProductionHistory(db *gorm.DB, opts SeedOptions) error {
+	if db == nil {
+		return fmt.Errorf("seed report production history: db is nil")
+	}
+	if opts.Migrate {
+		if err := repository.AutoMigrate(db); err != nil {
+			return fmt.Errorf("migrate: %w", err)
 		}
 	}
+	reportSlots, err := seedReportProductionHistoryStrict(db)
+	if err != nil {
+		return err
+	}
+	seedQuality(db, reportSlots)
+	seedReportMaintenance(db)
+	return nil
+}
+
+func seedReportProductionHistory(db *gorm.DB) map[string][]string {
+	reportSlots, err := seedReportProductionHistoryStrict(db)
+	if err != nil {
+		log.Printf("  report production history: %v", err)
+	}
+	return reportSlots
+}
+
+func seedReportProductionHistoryStrict(db *gorm.DB) (map[string][]string, error) {
+	reportSlots := map[string][]string{}
+	err := db.Transaction(func(tx *gorm.DB) error {
+		if err := clearReportProductionHistory(tx); err != nil {
+			return err
+		}
+		base := time.Now().UTC().Truncate(24*time.Hour).AddDate(0, 0, -21)
+		specs := []struct {
+			ID       string
+			Qty      int
+			Scrap    int
+			Day      int
+			Priority string
+		}{
+			{ID: "001", Qty: 28, Scrap: 1, Day: 0, Priority: domain.JobPriorityMedium},
+			{ID: "002", Qty: 36, Scrap: 0, Day: 4, Priority: domain.JobPriorityHigh},
+			{ID: "003", Qty: 22, Scrap: 2, Day: 9, Priority: domain.JobPriorityLow},
+			{ID: "004", Qty: 42, Scrap: 1, Day: 14, Priority: domain.JobPriorityMedium},
+			{ID: "005", Qty: 30, Scrap: 0, Day: 18, Priority: domain.JobPriorityHigh},
+		}
+		for _, spec := range specs {
+			start1 := base.AddDate(0, 0, spec.Day).Add(8 * time.Hour)
+			end1 := start1.Add(45 * time.Minute)
+			start2 := end1.Add(30 * time.Minute)
+			end2 := start2.Add(60 * time.Minute)
+			jobID := "JOB-RPT-" + spec.ID
+			step1ID := "JS-RPT-" + spec.ID + "-1"
+			step2ID := "JS-RPT-" + spec.ID + "-2"
+			slot1ID := "SLOT-RPT-" + spec.ID + "-1"
+			slot2ID := "SLOT-RPT-" + spec.ID + "-2"
+			plannedInputUnits := spec.Qty + spec.Scrap
+
+			if err := seedReportMaterialReceipts(tx, jobID, spec.ID, float64(plannedInputUnits), start1.Add(-2*time.Hour)); err != nil {
+				return err
+			}
+			if err := tx.Create(&domain.Job{
+				JobID:         jobID,
+				ProductID:     "P-005",
+				QuantityTotal: spec.Qty,
+				Priority:      spec.Priority,
+				Deadline:      end2.Add(24 * time.Hour),
+				Status:        domain.JobStatusScheduled,
+				CreatedAt:     start1.Add(-24 * time.Hour),
+				UpdatedAt:     start1.Add(-24 * time.Hour),
+				Notes:         fmt.Sprintf("seed-report:P-005:%s:%d", start1.Format(time.RFC3339), spec.Qty),
+			}).Error; err != nil {
+				return err
+			}
+			if err := tx.Create([]domain.JobSteps{
+				{JobStepID: step1ID, JobID: jobID, StepID: "STP-P005-1", StepSequence: 1, QuantityTarget: spec.Qty, Status: domain.JobStepStatusScheduled},
+				{JobStepID: step2ID, JobID: jobID, StepID: "STP-P005-2", StepSequence: 2, QuantityTarget: spec.Qty, Status: domain.JobStepStatusScheduled},
+			}).Error; err != nil {
+				return err
+			}
+			if err := tx.Create([]domain.JobStepScheduleSlots{
+				{SlotID: slot1ID, JobStepID: step1ID, MachineID: "M-PRS-01", ScheduledStart: start1, ScheduledEnd: end1, QuantityPlanned: plannedInputUnits, SplitGroupID: "SG-" + step1ID, AllocationPercent: 100, Status: domain.SlotStatusPlanned},
+				{SlotID: slot2ID, JobStepID: step2ID, MachineID: "M-CTG-01", ScheduledStart: start2, ScheduledEnd: end2, QuantityPlanned: spec.Qty, SplitGroupID: "SG-" + step2ID, AllocationPercent: 100, Status: domain.SlotStatusPlanned},
+			}).Error; err != nil {
+				return err
+			}
+			if err := seedReportLogProduction(tx, seedReportLogRequest{
+				SlotID:           slot1ID,
+				StartTime:        start1,
+				EndTime:          end1,
+				QuantityProduced: spec.Qty,
+				QuantityScrap:    spec.Scrap,
+				OperatorNotes:    "Historical report seed: stamping",
+			}); err != nil {
+				return err
+			}
+			if err := seedReportLogProduction(tx, seedReportLogRequest{
+				SlotID:           slot2ID,
+				StartTime:        start2,
+				EndTime:          end2,
+				QuantityProduced: spec.Qty,
+				OperatorNotes:    "Historical report seed: coating",
+			}); err != nil {
+				return err
+			}
+			if spec.ID == "002" || spec.ID == "004" {
+				if err := tx.Create(&domain.MachineDowntime{
+					DowntimeID:      "DT-RPT-" + spec.ID,
+					MachineID:       "M-CTG-01",
+					JobStepSlotID:   slot2ID,
+					Cause:           "Coating booth adjustment",
+					StartTime:       start2.Add(15 * time.Minute),
+					EndTime:         start2.Add(25 * time.Minute),
+					DurationMinutes: 10,
+				}).Error; err != nil {
+					return err
+				}
+			}
+			reportSlots[jobID] = []string{slot1ID, slot2ID}
+		}
+		return nil
+	})
+	return reportSlots, err
+}
+
+func clearReportProductionHistory(db *gorm.DB) error {
+	reportJobFilter := "j.job_id LIKE 'JOB-RPT-%' OR j.notes LIKE 'seed-report:%'"
+	rootJobFilter := "job_id LIKE 'JOB-RPT-%' OR notes LIKE 'seed-report:%'"
+	statements := []string{
+		`DELETE FROM quality_inspection_records WHERE job_step_id IN (
+			SELECT js.job_step_id FROM job_steps js JOIN jobs j ON j.job_id = js.job_id WHERE ` + reportJobFilter + `
+		)`,
+		`DELETE FROM machine_downtime WHERE job_step_slot_id IN (
+			SELECT s.slot_id FROM job_step_schedule_slots s
+			JOIN job_steps js ON js.job_step_id = s.job_step_id
+			JOIN jobs j ON j.job_id = js.job_id WHERE ` + reportJobFilter + `
+		) OR downtime_id LIKE 'DT-RPT-%'`,
+		`DELETE FROM production_logs WHERE slot_id IN (
+			SELECT s.slot_id FROM job_step_schedule_slots s
+			JOIN job_steps js ON js.job_step_id = s.job_step_id
+			JOIN jobs j ON j.job_id = js.job_id WHERE ` + reportJobFilter + `
+		)`,
+		`DELETE FROM job_step_schedule_slots WHERE job_step_id IN (
+			SELECT js.job_step_id FROM job_steps js JOIN jobs j ON j.job_id = js.job_id WHERE ` + reportJobFilter + `
+		)`,
+		`DELETE FROM inventory_transactions WHERE reference_job_id LIKE 'JOB-RPT-%' OR transaction_id LIKE 'TXN-RPT-%'`,
+		`DELETE FROM product_inventory WHERE storage_location = 'FG-RPT'`,
+		`DELETE FROM wip_inventory WHERE id LIKE 'WIP-RPT-%' OR job_step_id IN (
+			SELECT js.job_step_id FROM job_steps js JOIN jobs j ON j.job_id = js.job_id WHERE ` + reportJobFilter + `
+		)`,
+		`DELETE FROM job_steps WHERE job_id IN (SELECT job_id FROM jobs WHERE ` + rootJobFilter + `)`,
+		`DELETE FROM jobs WHERE ` + rootJobFilter,
+	}
+	for _, stmt := range statements {
+		if err := db.Exec(stmt).Error; err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func seedReportMaterialReceipts(db *gorm.DB, jobID, suffix string, units float64, ts time.Time) error {
+	receipts := []struct {
+		MaterialID string
+		Qty        float64
+	}{
+		{MaterialID: "MAT-008", Qty: 1.2 * units},
+		{MaterialID: "MAT-010", Qty: 4 * units},
+		{MaterialID: "MAT-012", Qty: 0.2 * units},
+	}
+	for _, receipt := range receipts {
+		var material domain.InventoryMaterials
+		if err := db.First(&material, "material_id = ?", receipt.MaterialID).Error; err != nil {
+			return err
+		}
+		material.CurrentStock += receipt.Qty
+		material.Status = seedInventoryStatus(material.CurrentStock, material.MinStock)
+		material.LastUpdated = time.Now().UTC()
+		if err := db.Save(&material).Error; err != nil {
+			return err
+		}
+		if err := db.Create(&domain.InventoryTransactions{
+			TransactionID:   fmt.Sprintf("TXN-RPT-%s-%s", suffix, strings.ReplaceAll(receipt.MaterialID, "-", "")),
+			MaterialID:      receipt.MaterialID,
+			TransactionType: domain.TransactionTypeReceive,
+			Quantity:        receipt.Qty,
+			ReferenceJobID:  jobID,
+			Timestamp:       ts,
+			Notes:           "historical report seed receipt",
+		}).Error; err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+type seedReportLogRequest struct {
+	SlotID           string
+	StartTime        time.Time
+	EndTime          time.Time
+	QuantityProduced int
+	QuantityScrap    int
+	OperatorNotes    string
+}
+
+func seedReportLogProduction(db *gorm.DB, req seedReportLogRequest) error {
+	_, err := productionexec.LogProduction(db, productionexec.LogProductionRequest{
+		SlotID:           req.SlotID,
+		StartTime:        req.StartTime,
+		EndTime:          req.EndTime,
+		QuantityProduced: req.QuantityProduced,
+		QuantityScrap:    req.QuantityScrap,
+		OperatorNotes:    req.OperatorNotes,
+	}, productionexec.Options{
+		ProductionID:           "PL-RPT-" + strings.TrimPrefix(req.SlotID, "SLOT-RPT-"),
+		ProductStorageLocation: "FG-RPT",
+		TransactionID: func(slotID, _ string, materialID string) string {
+			return fmt.Sprintf("TXN-RPT-CONSUME-%s-%s", strings.TrimPrefix(slotID, "SLOT-RPT-"), strings.ReplaceAll(materialID, "-", ""))
+		},
+		ProductInventoryID: func(slotID, productID string) string {
+			return fmt.Sprintf("PINV-RPT-%s-%s", strings.TrimPrefix(slotID, "SLOT-RPT-"), strings.ReplaceAll(productID, "-", ""))
+		},
+		WIPID: func(slotID, productID string) string {
+			return fmt.Sprintf("WIP-RPT-%s-%s", strings.TrimPrefix(slotID, "SLOT-RPT-"), strings.ReplaceAll(productID, "-", ""))
+		},
+		ConsumeNotes: func(_, _, _ string) string {
+			return "historical report seed consumption"
+		},
+	})
+	return err
+}
+
+func seedRefreshReportExecution(db *gorm.DB, slot *domain.JobStepScheduleSlots, step *domain.JobSteps) error {
+	slot.Status = domain.SlotStatusCompleted
+	slot.ActualStart = &slot.ScheduledStart
+	slot.ActualEnd = &slot.ScheduledEnd
+	if err := db.Save(slot).Error; err != nil {
+		return err
+	}
+
+	var slots []domain.JobStepScheduleSlots
+	if err := db.Where("job_step_id = ?", step.JobStepID).Find(&slots).Error; err != nil {
+		return err
+	}
+	totalProduced := 0
+	totalAccounted := 0
+	totalPlanned := 0
+	for _, st := range slots {
+		totalPlanned += st.QuantityPlanned
+		var logs []domain.ProductionLogs
+		if err := db.Where("slot_id = ?", st.SlotID).Find(&logs).Error; err != nil {
+			return err
+		}
+		for _, log := range logs {
+			totalProduced += log.QuantityProduced
+			totalAccounted += log.QuantityProduced + log.QuantityScrap
+		}
+	}
+	step.QuantityCompleted = seedMinInt(totalProduced, step.QuantityTarget)
+	if step.QuantityCompleted >= step.QuantityTarget {
+		step.Status = domain.JobStepStatusCompleted
+	} else if totalPlanned > 0 && totalAccounted >= totalPlanned {
+		step.Status = domain.JobStepStatusBlocked
+	} else if totalAccounted > 0 {
+		step.Status = domain.JobStepStatusRunning
+	}
+	if err := db.Save(step).Error; err != nil {
+		return err
+	}
+
+	var job domain.Job
+	if err := db.First(&job, "job_id = ?", step.JobID).Error; err != nil {
+		return err
+	}
+	var steps []domain.JobSteps
+	if err := db.Where("job_id = ?", job.JobID).Order("step_sequence ASC").Find(&steps).Error; err != nil {
+		return err
+	}
+	minCompleted := steps[0].QuantityCompleted
+	allCompleted := true
+	anyBlocked := false
+	anyProgress := false
+	for _, st := range steps {
+		if st.QuantityCompleted < minCompleted {
+			minCompleted = st.QuantityCompleted
+		}
+		if st.Status != domain.JobStepStatusCompleted {
+			allCompleted = false
+		}
+		if st.Status == domain.JobStepStatusBlocked {
+			anyBlocked = true
+		}
+		if st.QuantityCompleted > 0 || st.Status == domain.JobStepStatusRunning {
+			anyProgress = true
+		}
+	}
+	job.QuantityCompleted = seedMinInt(minCompleted, job.QuantityTotal)
+	if allCompleted && job.QuantityCompleted >= job.QuantityTotal {
+		job.Status = domain.JobStatusCompleted
+	} else if anyBlocked {
+		job.Status = domain.JobStatusBlocked
+	} else if anyProgress {
+		job.Status = domain.JobStatusRunning
+	}
+	job.UpdatedAt = time.Now().UTC()
+	return db.Save(&job).Error
+}
+
+func seedMinInt(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+func seedInventoryStatus(currentStock, minStock float64) string {
+	if currentStock <= 0 {
+		return domain.InventoryStatusOutOfStock
+	}
+	if currentStock < minStock {
+		return domain.InventoryStatusLowStock
+	}
+	return domain.InventoryStatusInStock
 }
 
 func seedQuality(db *gorm.DB, jobSlots map[string][]string) {
@@ -1015,12 +1312,26 @@ func seedMaintenance(db *gorm.DB) {
 	for _, m := range maints {
 		_ = mntRepo.Create(&m)
 	}
+	seedReportMaintenance(db)
 	downtimes := []domain.MachineDowntime{
 		{DowntimeID: id.NewPrefixed("DT-"), MachineID: "M-CNC-01", Cause: "Coolant pump low pressure alarm", StartTime: parseTime("2026-01-06T09:00:00Z"), EndTime: parseTime("2026-01-06T09:10:00Z"), DurationMinutes: 10},
 		{DowntimeID: id.NewPrefixed("DT-"), MachineID: "M-CTG-01", Cause: "Coating solution temperature out of range", StartTime: parseTime("2026-01-07T10:30:00Z"), EndTime: parseTime("2026-01-07T10:45:00Z"), DurationMinutes: 15},
 	}
 	for _, d := range downtimes {
 		_ = downtimeRepo.Create(&d)
+	}
+}
+
+func seedReportMaintenance(db *gorm.DB) {
+	mntRepo := repository.NewMaintenanceRepository(db)
+	now := time.Now().UTC().Truncate(24 * time.Hour)
+	_ = db.Exec("DELETE FROM maintenance_records WHERE maintenance_id LIKE 'MNT-RPT-%'").Error
+	maints := []domain.MaintenanceRecords{
+		{MaintenanceID: "MNT-RPT-001", MachineID: "M-PRS-01", MaintenanceType: "preventive", Technician: "Seed Technician", StartTime: now.AddDate(0, 0, -13).Add(6 * time.Hour), EndTime: now.AddDate(0, 0, -13).Add(8 * time.Hour), Description: "Historical report seed maintenance"},
+		{MaintenanceID: "MNT-RPT-002", MachineID: "M-CTG-01", MaintenanceType: "corrective", Technician: "Seed Technician", StartTime: now.AddDate(0, 0, -5).Add(7 * time.Hour), EndTime: now.AddDate(0, 0, -5).Add(9 * time.Hour), Description: "Historical report seed maintenance"},
+	}
+	for _, m := range maints {
+		_ = mntRepo.Create(&m)
 	}
 }
 
@@ -1170,7 +1481,7 @@ func AssertCanonicalFingerprint(db *gorm.DB) error {
 		{table: "machines", col: "machine_id", ids: []string{"M-CNC-01"}},
 		{table: "products", col: "product_id", ids: []string{"P-001", "P-002", "P-003", "P-004", "P-005", "P-006", "P-007", "P-008", "P-009"}},
 		{table: "inventory_materials", col: "material_id", ids: []string{"MAT-001", "MAT-002", "MAT-003", "MAT-004", "MAT-005", "MAT-006", "MAT-007", "MAT-008", "MAT-009", "MAT-010", "MAT-011", "MAT-012", "MAT-013", "MAT-014"}},
-		{table: "jobs", col: "job_id", ids: []string{"JOB-SEED-001", "JOB-SEED-002", "JOB-SEED-003", "JOB-SEED-004", "JOB-SEED-005", "JOB-SEED-006", "JOB-SEED-007", "JOB-SEED-008", "JOB-SEED-009", "JOB-SEED-010", "JOB-SEED-011", "JOB-SEED-012", "JOB-SEED-013", "JOB-SEED-014", "JOB-SEED-015", "JOB-SEED-016", "JOB-SEED-017", "JOB-SEED-018", "JOB-SEED-019", "JOB-SEED-020", "JOB-SEED-021", "JOB-SEED-022", "JOB-SEED-023", "JOB-SEED-024", "JOB-SEED-025", "JOB-SEED-026"}},
+		{table: "jobs", col: "job_id", ids: []string{"JOB-SEED-001", "JOB-SEED-002", "JOB-SEED-003", "JOB-SEED-004", "JOB-SEED-005", "JOB-SEED-006", "JOB-SEED-007", "JOB-SEED-008", "JOB-SEED-009", "JOB-SEED-010", "JOB-SEED-011", "JOB-SEED-012", "JOB-SEED-013", "JOB-SEED-014", "JOB-SEED-015", "JOB-SEED-016", "JOB-SEED-017", "JOB-SEED-018", "JOB-SEED-019", "JOB-SEED-020", "JOB-SEED-021", "JOB-SEED-022", "JOB-SEED-023", "JOB-SEED-024", "JOB-SEED-025", "JOB-SEED-026", "JOB-RPT-001", "JOB-RPT-002", "JOB-RPT-003", "JOB-RPT-004", "JOB-RPT-005"}},
 		{table: "ai_proposals", col: "proposal_id", ids: []string{"AIPROP-SEED-001"}},
 	}
 	for _, check := range checks {

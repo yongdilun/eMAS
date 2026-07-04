@@ -17,6 +17,28 @@ const unwrapArr = (d) => {
 
 const titleCase = (value) => String(value).replace(/[_-]/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
 
+const statusBucket = (status, planned = 0, produced = 0) => {
+  const raw = String(status || '').toLowerCase().replace(/\s+/g, '-')
+  if (raw === 'completed') return 'completed'
+  if (raw === 'running' || raw === 'paused' || raw === 'blocked' || raw === 'in-progress' || raw === 'in_progress') return 'in-progress'
+  if (raw === 'planned' || raw === 'scheduled') return produced > 0 ? 'in-progress' : 'scheduled'
+  if (planned > 0 && produced >= planned) return 'completed'
+  if (produced > 0) return 'in-progress'
+  return 'scheduled'
+}
+
+const rowsFromCounts = (counts) => {
+  const total = Object.values(counts).reduce((a, b) => a + b, 0) || 1
+  return Object.entries(counts)
+    .filter(([, c]) => c > 0)
+    .map(([key, cnt]) => ({
+      name: titleCase(key),
+      jobs: cnt,
+      percentage: Math.round((cnt / total) * 100),
+      color: STATUS_COLORS[key] ?? '#94a3b8',
+    }))
+}
+
 const aggregate = (arr) => {
   if (!arr || arr.length === 0) return []
 
@@ -33,19 +55,20 @@ const aggregate = (arr) => {
     })
   }
 
-  if (arr[0]?.status != null && arr[0]?.job_id === undefined) {
-    const total = arr.reduce((s, d) => s + Number(d.count ?? d.jobs ?? 1), 0) || 1
-    return arr.map(d => {
-      const raw = String(d.status ?? 'Unknown')
-      const key = raw.toLowerCase().replace(/\s+/g, '-')
-      const cnt = Number(d.count ?? d.jobs ?? 1)
-      return {
-        name: titleCase(raw),
-        percentage: Math.round((cnt / total) * 100),
-        jobs: cnt,
-        color: STATUS_COLORS[key] ?? '#94a3b8',
-      }
+  if (arr.some(d => d?.status != null)) {
+    const byJob = {}
+    arr.forEach((d, idx) => {
+      const id = String(d.job_id ?? d.jobId ?? d.id ?? `row-${idx}`)
+      if (byJob[id]) return
+      const planned = Number(d.quantity_total ?? d.quantity_planned ?? d.quantityTotal ?? d.quantityPlanned ?? 0)
+      const produced = Number(d.quantity_completed ?? d.quantity_produced ?? d.quantityCompleted ?? d.quantityProduced ?? 0)
+      byJob[id] = statusBucket(d.status, planned, produced)
     })
+    const counts = { completed: 0, 'in-progress': 0, scheduled: 0 }
+    Object.values(byJob).forEach((bucket) => {
+      if (counts[bucket] != null) counts[bucket] += 1
+    })
+    return rowsFromCounts(counts)
   }
 
   const byJob = {}
@@ -63,15 +86,7 @@ const aggregate = (arr) => {
     else counts.scheduled++
   })
 
-  const total = Object.values(counts).reduce((a, b) => a + b, 0) || 1
-  return Object.entries(counts)
-    .filter(([, c]) => c > 0)
-    .map(([key, cnt]) => ({
-      name: titleCase(key),
-      jobs: cnt,
-      percentage: Math.round((cnt / total) * 100),
-      color: STATUS_COLORS[key],
-    }))
+  return rowsFromCounts(counts)
 }
 
 const JobTypeMixChart = ({ data }) => {
